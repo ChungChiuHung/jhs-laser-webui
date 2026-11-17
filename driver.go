@@ -36,6 +36,22 @@ SpeedWord uint16  `json:"speed_word"`
 FreqWord  uint16  `json:"freq_word"`
 }
 
+type VectorPolyline struct {
+Points [][2]float64 `json:"points"` // 實體毫米座標 (已正規化至 0 ~ WidthMM, 0 ~ HeightMM)
+Closed bool         `json:"closed"`
+}
+
+type VectorMarkRequest struct {
+WidthMM     float64          `json:"width_mm"`
+HeightMM    float64          `json:"height_mm"`
+Polylines   []VectorPolyline `json:"polylines"`
+HatchStepMM float64          `json:"hatch_step_mm"` // 0 = 僅外輪廓，>0 = 加入水平平行線填充
+ScaleX      float64          `json:"scale_x"`
+ScaleY      float64          `json:"scale_y"`
+PowerPct    float64          `json:"power_pct"`
+SpeedWord   uint16           `json:"speed_word"`
+}
+
 type LaserController interface {
 GetStatus() BoardStatus
 WriteOutputPort(mask uint16, val uint16) error
@@ -46,4 +62,5 @@ StartShapePreview(shape string, sizeMM float64, speedParam int, timeoutSec int) 
 StopPreview() error
 ExecuteLaserMark(req MarkRequest) error
 ExecuteQRCodeMark(req QRVectorRequest) (QRVectorResponse, error)
+ExecuteVectorMark(req VectorMarkRequest) error
 }

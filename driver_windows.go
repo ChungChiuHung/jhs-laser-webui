@@ -1025,3 +1025,259 @@ d.lastY.Store(32768)
 
 return vec, nil
 }
+// ExecuteVectorMark 接收前端解析的任意 SVG 多邊形路徑 (含掃描線 Even-Odd 填充 Hatch)，執行多 Buffer FIFO 分頁雷射雕刻
+func (d *WindowsJczDriver) ExecuteVectorMark(req VectorMarkRequest) error {
+if len(req.Polylines) == 0 {
+return fmt.Errorf("沒有可雕刻的 SVG 向量路徑")
+}
+if req.WidthMM <= 0 || req.HeightMM <= 0 || req.WidthMM > 95 || req.HeightMM > 95 {
+return fmt.Errorf("SVG 實體尺寸超出安全工作區範圍 (1~95 mm)")
+}
+
+d.stopFlag.Store(true)
+d.mu.Lock()
+defer d.mu.Unlock()
+
+if err := d.prepareEnv(); err != nil {
+return err
+}
+ret, _, _ := d.procOpenNew.Call()
+if int32(ret) <= 0 {
+d.procOpen.Call(0)
+}
+handle, _, _ := d.procGetHandle.Call(0)
+if handle == 0 {
+return fmt.Errorf("無法開啟控制卡")
+}
+defer d.procClose.Call()
+
+scaleX := req.ScaleX
+if scaleX < 0.7 || scaleX > 1.3 {
+scaleX = 1.0
+}
+scaleY := req.ScaleY
+if scaleY < 0.7 || scaleY > 1.3 {
+scaleY = 1.0
+}
+powerPct := req.PowerPct
+if powerPct < 1 {
+powerPct = 35
+}
+if powerPct > 100 {
+powerPct = 100
+}
+speedWord := req.SpeedWord
+if speedWord < 50 || speedWord > 5000 {
+speedWord = 450
+}
+
+powerWord := uint16(math.Round((powerPct / 100.0) * 4095.0))
+halfW := req.WidthMM / 2.0
+halfH := req.HeightMM / 2.0
+
+type cmdItem struct {
+isMark bool
+x, y   uint16
+poly   uint16
+}
+var items []cmdItem
+
+// 1. 雕刻所有向量輪廓線段
+for _, pl := range req.Polylines {
+if len(pl.Points) < 2 {
+continue
+}
+x0, y0 := d.mmToGalvoDAC((pl.Points[0][0]-halfW)*scaleX, (halfH-pl.Points[0][1])*scaleY, false)
+items = append(items, cmdItem{isMark: false, x: x0, y: y0})
+for i := 1; i < len(pl.Points); i++ {
+nx, ny := d.mmToGalvoDAC((pl.Points[i][0]-halfW)*scaleX, (halfH-pl.Points[i][1])*scaleY, false)
+items = append(items, cmdItem{isMark: true, x: nx, y: ny, poly: 0})
+}
+if pl.Closed {
+items = append(items, cmdItem{isMark: true, x: x0, y: y0, poly: 0})
+}
+}
+
+// 2. 若啟用填充 (HatchStepMM > 0)，對閉合多邊形執行 Even-Odd 水平掃描線交點計算並生成弓字形填充線
+hatchStep := req.HatchStepMM
+if hatchStep > 0 && hatchStep < 0.03 {
+hatchStep = 0.03
+}
+if hatchStep > 0 {
+type edge struct{ x1, y1, x2, y2 float64 }
+var edges []edge
+for _, pl := range req.Polylines {
+if !pl.Closed || len(pl.Points) < 3 {
+continue
+}
+for i := 0; i < len(pl.Points); i++ {
+p1 := pl.Points[i]
+p2 := pl.Points[(i+1)%len(pl.Points)]
+if math.Abs(p1[1]-p2[1]) > 1e-6 {
+edges = append(edges, edge{p1[0], p1[1], p2[0], p2[1]})
+}
+}
+}
+
+dirFlip := false
+for y := hatchStep / 2.0; y < req.HeightMM; y += hatchStep {
+var xs []float64
+for _, e := range edges {
+if (e.y1 <= y && e.y2 > y) || (e.y2 <= y && e.y1 > y) {
+t := (y - e.y1) / (e.y2 - e.y1)
+xs = append(xs, e.x1+t*(e.x2-e.x1))
+}
+}
+if len(xs) < 2 {
+continue
+}
+// 排序交點並兩兩配對 (Even-Odd 規則自動挖空內部孔洞)
+for i := 0; i < len(xs)-1; i++ {
+for j := i + 1; j < len(xs); j++ {
+if xs[j] < xs[i] {
+xs[i], xs[j] = xs[j], xs[i]
+}
+}
+}
+yPhys := (halfH - y) * scaleY
+if !dirFlip {
+for k := 0; k+1 < len(xs); k += 2 {
+if xs[k+1]-xs[k] < 0.01 {
+continue
+}
+lx, ly := d.mmToGalvoDAC((xs[k]-halfW)*scaleX, yPhys, false)
+rx, ry := d.mmToGalvoDAC((xs[k+1]-halfW)*scaleX, yPhys, false)
+items = append(items, cmdItem{isMark: false, x: lx, y: ly})
+items = append(items, cmdItem{isMark: true, x: rx, y: ry, poly: 0})
+}
+} else {
+lastPair := (len(xs)/2)*2 - 2
+for k := lastPair; k >= 0; k -= 2 {
+if xs[k+1]-xs[k] < 0.01 {
+continue
+}
+rx, ry := d.mmToGalvoDAC((xs[k+1]-halfW)*scaleX, yPhys, false)
+lx, ly := d.mmToGalvoDAC((xs[k]-halfW)*scaleX, yPhys, false)
+items = append(items, cmdItem{isMark: false, x: rx, y: ry})
+items = append(items, cmdItem{isMark: true, x: lx, y: ly, poly: 0})
+}
+}
+dirFlip = !dirFlip
+}
+}
+
+if len(items) == 0 {
+return fmt.Errorf("產生的雕刻指令為空")
+}
+
+var res tagResult
+cardID := uintptr(0)
+
+d.procWritePort.Call(uintptr(unsafe.Pointer(&res)), cardID, 0x0000, 0)
+d.procResetList.Call(uintptr(unsafe.Pointer(&res)), cardID)
+d.procGotoXY.Call(uintptr(unsafe.Pointer(&res)), cardID, 0x8001, 0x8001)
+d.procIPGOpenMO.Call(uintptr(unsafe.Pointer(&res)), cardID, 1)
+
+curX, curY := 32769.0, 32769.0
+idx := 0
+total := len(items)
+firstPacket := true
+
+for idx < total {
+var buf tagLmcCmd
+for s := 0; s < 256; s++ {
+buf.words[s*6] = 0x8002
+}
+slot := 0
+if firstPacket {
+buf.words[0*6+0] = 0x8051
+buf.words[1*6+0] = 0x8004
+buf.words[1*6+1] = 800
+buf.words[2*6+0] = 0x801b
+buf.words[2*6+1] = 1000
+buf.words[3*6+0] = 0x8012
+buf.words[3*6+1] = powerWord
+buf.words[4*6+0] = 0x8006
+buf.words[4*6+1] = 2400
+buf.words[5*6+0] = 0x800c
+buf.words[5*6+1] = speedWord
+buf.words[6*6+0] = 0x8007
+buf.words[6*6+1] = 250
+buf.words[7*6+0] = 0x8008
+buf.words[7*6+1] = 100
+buf.words[8*6+0] = 0x800f
+buf.words[8*6+1] = 15
+buf.words[9*6+0] = 0x800d
+buf.words[9*6+1] = 10
+slot = 10
+}
+
+maxSlot := 256
+if total-idx <= (254 - slot) {
+maxSlot = 254
+}
+
+for slot < maxSlot && idx < total {
+it := items[idx]
+dist := uint16(math.Hypot(float64(it.x)-curX, float64(it.y)-curY))
+if dist == 0 {
+dist = 1
+}
+base := slot * 6
+if it.isMark {
+buf.words[base+0] = 0x8005
+} else {
+buf.words[base+0] = 0x8001
+}
+buf.words[base+1] = it.x
+buf.words[base+2] = it.y
+buf.words[base+3] = it.poly
+buf.words[base+4] = dist
+buf.words[base+5] = 0
+curX, curY = float64(it.x), float64(it.y)
+slot++
+idx++
+}
+
+if idx >= total && slot <= 254 {
+buf.words[slot*6+0] = 0x8004
+buf.words[slot*6+1] = 40
+slot++
+distHome := uint16(math.Hypot(32768.0-curX, 32768.0-curY))
+buf.words[slot*6+0] = 0x8001
+buf.words[slot*6+1] = 0x8000
+buf.words[slot*6+2] = 0x8000
+buf.words[slot*6+4] = distHome
+slot++
+}
+
+if firstPacket {
+d.procWriteCmdBuf.Call(uintptr(unsafe.Pointer(&res)), cardID, uintptr(unsafe.Pointer(&buf)))
+d.procExecuteList.Call(uintptr(unsafe.Pointer(&res)), cardID)
+firstPacket = false
+} else {
+for {
+d.procGetListStat.Call(uintptr(unsafe.Pointer(&res)), cardID)
+if res.v0 != 0 {
+break
+}
+time.Sleep(4 * time.Millisecond)
+}
+d.procWriteCmdBuf.Call(uintptr(unsafe.Pointer(&res)), cardID, uintptr(unsafe.Pointer(&buf)))
+}
+}
+
+time.Sleep(240 * time.Millisecond)
+
+d.procSetCtrlMode.Call(uintptr(unsafe.Pointer(&res)), cardID, 1)
+d.procWritePort.Call(uintptr(unsafe.Pointer(&res)), cardID, 0x0000, 0)
+d.procSetStandby.Call(uintptr(unsafe.Pointer(&res)), cardID, 2000, 20, 1)
+d.procIPGOpenMO.Call(uintptr(unsafe.Pointer(&res)), cardID, 0)
+d.procCmd.Call(uintptr(unsafe.Pointer(&res)), cardID, 0x0041, 3, 0, 0, 0, 0)
+d.procWritePort.Call(uintptr(unsafe.Pointer(&res)), cardID, 0x0010, 0)
+d.outPort = 0x0010
+d.lastX.Store(32768)
+d.lastY.Store(32768)
+
+return nil
+}

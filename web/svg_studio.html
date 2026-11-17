@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SVG 向量打標與點陣圖轉向量工作室 — JHS Laser Control Studio</title>
+  <style>
+    :root {
+      --bg-base: #161A1E;
+      --bg-surface: #1F242B;
+      --bg-elevated: #272D36;
+      --bg-input: #14181C;
+      --border-subtle: rgba(168, 182, 196, 0.14);
+      --border-strong: rgba(168, 182, 196, 0.28);
+
+      --text-primary: #E6EAEF;
+      --text-secondary: #98A3AE;
+      --text-muted: #68737E;
+
+      --morandi-blue: #6C8EAD;
+      --morandi-blue-soft: rgba(108, 142, 173, 0.16);
+      --morandi-sage: #6B9E8A;
+      --morandi-sage-soft: rgba(107, 158, 138, 0.16);
+      --morandi-sand: #C89B6E;
+      --morandi-sand-soft: rgba(200, 155, 110, 0.16);
+      --morandi-terra: #C86D6D;
+      --morandi-terra-soft: rgba(200, 109, 109, 0.16);
+
+      --radius-lg: 14px;
+      --radius-md: 10px;
+      --radius-sm: 7px;
+      --font-mono: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft JhengHei', sans-serif;
+      background-color: var(--bg-base);
+      background-image: radial-gradient(circle at 15% 0%, rgba(108, 142, 173, 0.08), transparent 45%),
+                        radial-gradient(circle at 85% 100%, rgba(107, 158, 138, 0.06), transparent 45%);
+      color: var(--text-primary);
+      margin: 0;
+      padding: 20px 24px;
+      line-height: 1.45;
+    }
+
+    .app-shell {
+      max-width: 1360px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 14px 20px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+    }
+
+    .brand { display: flex; align-items: center; gap: 14px; }
+    .brand-icon {
+      width: 38px; height: 38px; border-radius: 10px;
+      background: linear-gradient(135deg, var(--morandi-sage), #4E7A69);
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 800; font-size: 15px; color: #F4F7FA;
+    }
+    .brand h1 { margin: 0; font-size: 18px; font-weight: 600; display: flex; align-items: center; gap: 10px; }
+    .brand-sub { font-size: 12px; color: var(--text-secondary); font-family: var(--font-mono); margin-top: 2px; }
+
+    .workspace-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+      align-items: start;
+    }
+
+    .panel {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: 18px 20px;
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.16);
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .panel-title { margin: 0; font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+    .dot-accent { width: 8px; height: 8px; border-radius: 2px; background: var(--morandi-blue); }
+
+    .dropzone {
+      border: 1.5px dashed var(--border-strong);
+      border-radius: var(--radius-md);
+      background: var(--bg-input);
+      padding: 18px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .dropzone:hover, .dropzone.dragover {
+      border-color: var(--morandi-blue);
+      background: rgba(108, 142, 173, 0.08);
+    }
+
+    .form-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+
+    .field-group {
+      display: flex; align-items: center; gap: 6px;
+      background: var(--bg-input); border: 1px solid var(--border-subtle);
+      padding: 5px 10px; border-radius: var(--radius-sm);
+      font-size: 12.5px; color: var(--text-secondary);
+    }
+    .field-group input, .field-group select {
+      background: transparent; border: none; color: var(--text-primary);
+      font-family: var(--font-mono); font-size: 13px; font-weight: 600; outline: none;
+    }
+    .field-group select option { background: var(--bg-surface); color: var(--text-primary); }
+    .field-group input[type="number"] { width: 56px; text-align: right; }
+    .field-group input[type="range"] { width: 95px; accent-color: var(--morandi-blue); }
+
+    .btn {
+      border: 1px solid transparent; border-radius: var(--radius-sm);
+      padding: 7px 14px; font-size: 12.5px; font-weight: 600;
+      cursor: pointer; transition: all 0.15s ease;
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+      color: #F4F7FA; text-decoration: none;
+    }
+    .btn:hover { filter: brightness(1.08); transform: translateY(-1px); }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+    .btn-blue { background: var(--morandi-blue); }
+    .btn-sage { background: var(--morandi-sage); }
+    .btn-sand { background: var(--morandi-sand); color: #161A1E; }
+    .btn-terra { background: var(--morandi-terra); }
+    .btn-ghost { background: var(--bg-elevated); border-color: var(--border-subtle); color: var(--text-primary); }
+
+    .preview-stage {
+      background: #F4F6F8;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border-strong);
+      min-height: 290px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      position: relative;
+      overflow: hidden;
+    }
+    .preview-stage svg {
+      max-width: 100%;
+      max-height: 270px;
+      width: auto;
+      height: auto;
+    }
+
+    .status-pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 5px 12px; border-radius: 999px;
+      font-size: 12px; font-weight: 600;
+    }
+    .pill-sage { background: var(--morandi-sage-soft); color: #8EC2AE; border: 1px solid rgba(107,158,138,0.3); }
+    .pill-terra { background: var(--morandi-terra-soft); color: #E29494; border: 1px solid rgba(200,109,109,0.3); }
+    .pill-blue { background: var(--morandi-blue-soft); color: #9BB8D3; border: 1px solid rgba(108,142,173,0.3); }
+
+    .meta-bar {
+      font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary);
+      background: var(--bg-input); padding: 8px 12px; border-radius: var(--radius-sm);
+    }
+
+    @media (max-width: 960px) {
+      .workspace-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <!-- Top Header -->
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-icon">SVG</div>
+        <div>
+          <h1>SVG 向量打標與點陣圖轉向量工作室</h1>
+          <div class="brand-sub">PNG / JPG / GIF 閉合輪廓向量化 · SVG 路徑解析與 F1/F2 直接雷射雕刻</div>
+        </div>
+      </div>
+      <div style="display:flex; gap:12px; align-items:center;">
+        <span id="connPill" class="status-pill pill-sage">硬體連線檢測中...</span>
+        <a href="/" class="btn btn-ghost">← 返回主控制台</a>
+      </div>
+    </header>
+
+    <main class="workspace-grid">
+      <!-- Left Column: PNG / JPG / GIF to Printable/Laser Vector SVG Converter -->
+      <section class="panel">
+        <div class="panel-header">
+          <h2 class="panel-title"><span class="dot-accent" style="background:var(--morandi-sage);"></span>1. 點陣圖 (PNG / JPG / GIF) 轉可雷射 SVG 向量檔</h2>
+          <span class="status-pill pill-blue">閉合輪廓合併引擎</span>
+        </div>
+
+        <div class="dropzone" id="imgDropzone" onclick="document.getElementById('imgFileInput').click()">
+          <input type="file" id="imgFileInput" accept="image/png,image/jpeg,image/gif,image/webp" style="display:none" onchange="handleImageUpload(this.files[0])">
+          <div style="font-weight:600; font-size:14px; color:var(--text-primary);">點擊選擇或拖曳 PNG / JPG / GIF 圖片至此</div>
+          <div style="font-size:12px; color:var(--text-secondary); margin-top:4px;">自動二值化並追蹤合併閉合輪廓 (消除內部重複切割線，1 SVG 單位 = 1 mm)</div>
+        </div>
+
+        <div class="form-row">
+          <div class="field-group" title="調整黑白分界靈敏度">
+            <span>黑白閾值</span>
+            <input type="range" id="imgThreshold" min="10" max="245" value="128" oninput="document.getElementById('thVal').textContent=this.value; retraceImage();">
+            <span id="thVal" style="font-family:var(--font-mono); width:26px;">128</span>
+          </div>
+          <div class="field-group" title="採樣網格解析度，數值越高細節越細但路徑越多">
+            <span>採樣格數</span>
+            <select id="imgGridSize" onchange="retraceImage()">
+              <option value="64">64 px (快速粗略)</option>
+              <option value="100" selected>100 px (標準平衡)</option>
+              <option value="150">150 px (高精細細節)</option>
+              <option value="200">200 px (極細文字/標誌)</option>
+            </select>
+          </div>
+          <div class="field-group">
+            <label style="display:flex; align-items:center; gap:5px; cursor:pointer; margin:0;">
+              <input type="checkbox" id="imgInvert" onchange="retraceImage()" style="accent-color:var(--morandi-blue);">
+              <span>反白 (雕亮部)</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="field-group">
+            <span>輸出實體寬度</span>
+            <input type="number" id="imgTargetWidthMM" value="25" min="2" max="90" step="0.5" oninput="retraceImage()">
+            <span>mm (高度自動等比例)</span>
+          </div>
+          <button class="btn btn-sage" id="btnSendToLaser" disabled onclick="sendConvertedSvgToLaser()">傳送至右側雷射雕刻區 →</button>
+          <button class="btn btn-blue" id="btnDownloadSvg" disabled onclick="downloadGeneratedSvg()">下載可列印/雷射 SVG</button>
+        </div>
+
+        <div class="preview-stage" id="imgSvgStage">
+          <span style="color:#68737E; font-size:13px;">尚未載入點陣圖片，上傳後將在此即時渲染純向量 SVG 輪廓</span>
+        </div>
+        <div class="meta-bar" id="imgMetaBar">等待上傳 PNG / JPG / GIF 檔案...</div>
+      </section>
+
+      <!-- Right Column: SVG File Direct Laser Marking & Preview -->
+      <section class="panel" style="border-color: rgba(200, 109, 109, 0.35);">
+        <div class="panel-header">
+          <h2 class="panel-title"><span class="dot-accent" style="background:var(--morandi-terra);"></span>2. SVG 向量檔匯入與 F1/F2 直接雷射雕刻</h2>
+          <span id="laserStatePill" class="status-pill pill-sage">雷射安全待機 (MO=0)</span>
+        </div>
+
+        <div class="dropzone" id="svgDropzone" onclick="document.getElementById('svgFileInput').click()">
+          <input type="file" id="svgFileInput" accept=".svg,image/svg+xml" style="display:none" onchange="handleSvgUpload(this.files[0])">
+          <div style="font-weight:600; font-size:14px; color:var(--text-primary);">點擊匯入外部 .SVG 檔案 (或由左側一鍵傳送)</div>
+          <div style="font-size:12px; color:var(--text-secondary); margin-top:4px;">支援 &lt;path&gt; 曲線離散化、&lt;rect&gt;、&lt;circle&gt;、&lt;polygon&gt; 與高密度平行線填充</div>
+        </div>
+
+        <div class="form-row">
+          <div class="field-group">
+            <span>目標寬度</span>
+            <input type="number" id="svgMarkWidthMM" value="25" min="1" max="90" step="0.5" oninput="recalcSvgDimensions('w')">
+            <span>mm</span>
+          </div>
+          <div class="field-group">
+            <span>目標高度</span>
+            <input type="number" id="svgMarkHeightMM" value="25" min="1" max="90" step="0.5" oninput="recalcSvgDimensions('h')">
+            <span>mm</span>
+          </div>
+          <div class="field-group">
+            <label style="display:flex; align-items:center; gap:5px; cursor:pointer; margin:0;">
+              <input type="checkbox" id="svgLockAspect" checked style="accent-color:var(--morandi-blue);">
+              <span>鎖定等比例</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="field-group" title="0 = 僅沿 SVG 輪廓線雕刻；>0 = 內部平行線填充塗黑">
+            <span>內部填充線距</span>
+            <input type="number" id="svgHatchStep" value="0.08" min="0" max="1.0" step="0.01">
+            <span>mm</span>
+          </div>
+          <div class="field-group">
+            <span>功率</span>
+            <input type="number" id="svgPowerPct" value="35" min="1" max="100" style="color:#DFB890;">
+            <span>%</span>
+          </div>
+          <div class="field-group">
+            <span>雕刻速度</span>
+            <input type="number" id="svgSpeedWord" value="450" min="80" max="3000" step="10">
+          </div>
+        </div>
+
+        <div class="form-row">
+          <button class="btn btn-blue" id="btnSvgF1Preview" disabled onclick="previewSvgBoundingBox()">F1 紅光外框預覽 (30秒)</button>
+          <button class="btn btn-sand" onclick="stopF1Preview()">■ 停止紅光</button>
+          <button class="btn btn-terra" id="btnSvgF2Mark" disabled onclick="executeSvgLaserMark()" style="flex:1; padding:8px 16px;">⚡ 執行 SVG 實際雷射打標 (F2)</button>
+        </div>
+
+        <div class="preview-stage" id="svgMarkStage">
+          <span style="color:#68737E; font-size:13px;">匯入或傳入 SVG 後，將在此顯示向量路徑預覽</span>
+        </div>
+        <div class="meta-bar" id="svgMetaBar">尚未載入 SVG 向量路徑...</div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Hidden Canvas for Raster Image Processing -->
+  <canvas id="procCanvas" style="display:none;"></canvas>
+
+  <script>
+    let loadedImgObj = null;
+    let generatedSvgString = "";
+    let parsedPolylines = [];
+    let svgAspectRatio = 1.0;
+
+    // 1. 檢查設備連線狀態
+    async function checkBoardConn() {
+      try {
+        const res = await fetch('/api/status?t=' + Date.now());
+        const d = await res.json();
+        const pill = document.getElementById('connPill');
+        if (d.connected) {
+          pill.textContent = '控制卡已連線 (' + d.handle_hex + ')';
+          pill.className = 'status-pill pill-sage';
+        } else {
+          pill.textContent = '控制卡未連線';
+          pill.className = 'status-pill pill-terra';
+        }
+      } catch (e) {}
+    }
+    checkBoardConn();
+
+    // 2. 拖曳事件綁定
+    function setupDrop(elId, cb) {
+      const el = document.getElementById(elId);
+      el.addEventListener('dragover', e => { e.preventDefault(); el.classList.add('dragover'); });
+      el.addEventListener('dragleave', () => el.classList.remove('dragover'));
+      el.addEventListener('drop', e => {
+        e.preventDefault();
+        el.classList.remove('dragover');
+        if (e.dataTransfer.files && e.dataTransfer.files[0]) cb(e.dataTransfer.files[0]);
+      });
+    }
+    setupDrop('imgDropzone', handleImageUpload);
+    setupDrop('svgDropzone', handleSvgUpload);
+
+    // =========================================================================
+    // A. 點陣圖 (PNG/JPG/GIF) 轉合併閉合輪廓 SVG 演算法
+    // =========================================================================
+    function handleImageUpload(file) {
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(evt) {
+        const img = new Image();
+        img.onload = function() {
+          loadedImgObj = img;
+          retraceImage();
+        };
+        img.src = evt.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
+
+    function retraceImage() {
+      if (!loadedImgObj) return;
+      const maxGrid = parseInt(document.getElementById('imgGridSize').value, 10) || 100;
+      const threshold = parseInt(document.getElementById('imgThreshold').value, 10) || 128;
+      const invert = document.getElementById('imgInvert').checked;
+      const targetW = parseFloat(document.getElementById('imgTargetWidthMM').value) || 25;
+
+      const ratio = loadedImgObj.height / loadedImgObj.width;
+      const w = loadedImgObj.width >= loadedImgObj.height ? maxGrid : Math.max(8, Math.round(maxGrid / ratio));
+      const h = loadedImgObj.height > loadedImgObj.width ? maxGrid : Math.max(8, Math.round(maxGrid * ratio));
+
+      const canvas = document.getElementById('procCanvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(loadedImgObj, 0, 0, w, h);
+
+      const imgData = ctx.getImageData(0, 0, w, h).data;
+      const grid = Array.from({ length: h }, () => new Array(w).fill(false));
+
+      for (let r = 0; r < h; r++) {
+        for (let c = 0; c < w; c++) {
+          const idx = (r * w + c) * 4;
+          const lum = 0.299 * imgData[idx] + 0.587 * imgData[idx + 1] + 0.114 * imgData[idx + 2];
+          const isDark = lum < threshold;
+          grid[r][c] = invert ? !isDark : isDark;
+        }
+      }
+
+      const loops = traceGridContours(grid, w, h);
+      const pixelMM = targetW / w;
+      const targetH = Math.round(h * pixelMM * 1000) / 1000;
+
+      const pathParts = [];
+      for (let i = 0; i < loops.length; i++) {
+        const pts = loops[i];
+        let seg = '';
+        for (let j = 0; j < pts.length; j++) {
+          const px = Math.round(pts[j][0] * pixelMM * 1000) / 1000;
+          const py = Math.round(pts[j][1] * pixelMM * 1000) / 1000;
+          seg += (j === 0 ? 'M' : 'L') + px + ',' + py + ' ';
+        }
+        pathParts.push(seg + 'Z');
+      }
+
+      generatedSvgString =
+        '<?xml version="1.0" encoding="UTF-8"?>\n' +
+        '<svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="' + targetW + 'mm" height="' + targetH + 'mm" viewBox="0 0 ' + targetW + ' ' + targetH + '">\n' +
+        '  <path fill="#000000" fill-rule="evenodd" stroke="none" d="' + pathParts.join('\n') + '"/>\n' +
+        '</svg>\n';
+
+      document.getElementById('imgSvgStage').innerHTML = generatedSvgString;
+      document.getElementById('imgMetaBar').textContent =
+        '原始尺寸: ' + loadedImgObj.width + '×' + loadedImgObj.height + 'px · 採樣: ' + w + '×' + h + ' · 實體尺寸: ' + targetW + ' × ' + targetH + ' mm · 合併輪廓數: ' + loops.length;
+
+      document.getElementById('btnSendToLaser').disabled = loops.length === 0;
+      document.getElementById('btnDownloadSvg').disabled = loops.length === 0;
+    }
+
+    function traceGridContours(grid, w, h) {
+      function dark(r, c) { return r >= 0 && c >= 0 && r < h && c < w && grid[r][c]; }
+      const out = {};
+      let count = 0;
+      function add(x, y, dx, dy) {
+        const k = x + ',' + y;
+        (out[k] = out[k] || []).push([dx, dy]);
+        count++;
+      }
+      for (let r = 0; r < h; r++) {
+        for (let c = 0; c < w; c++) {
+          if (!dark(r, c)) continue;
+          if (!dark(r - 1, c)) add(c, r, 1, 0);
+          if (!dark(r, c + 1)) add(c + 1, r, 0, 1);
+          if (!dark(r + 1, c)) add(c + 1, r + 1, -1, 0);
+          if (!dark(r, c - 1)) add(c, r + 1, 0, -1);
+        }
+      }
+      function take(x, y, pdx, pdy) {
+        const list = out[x + ',' + y];
+        if (!list || !list.length) return null;
+        const prefs = [[-pdy, pdx], [pdx, pdy], [pdy, -pdx]];
+        for (let i = 0; i < prefs.length; i++) {
+          for (let j = 0; j < list.length; j++) {
+            if (list[j][0] === prefs[i][0] && list[j][1] === prefs[i][1]) {
+              return list.splice(j, 1)[0];
+            }
+          }
+        }
+        return list.splice(0, 1)[0];
+      }
+      const loops = [];
+      const keys = Object.keys(out).sort((a, b) => {
+        const A = a.split(',').map(Number), B = b.split(',').map(Number);
+        return (A[1] - B[1]) || (A[0] - B[0]);
+      });
+      for (let ki = 0; ki < keys.length; ki++) {
+        while (out[keys[ki]].length) {
+          const xy = keys[ki].split(',').map(Number);
+          const sx = xy[0], sy = xy[1];
+          let dir = out[keys[ki]].shift();
+          const pts = [[sx, sy]];
+          let x = sx + dir[0], y = sy + dir[1];
+          let guard = 0;
+          while (!(x === sx && y === sy)) {
+            const nd = take(x, y, dir[0], dir[1]);
+            if (!nd || ++guard > count + 8) break;
+            if (nd[0] !== dir[0] || nd[1] !== dir[1]) pts.push([x, y]);
+            dir = nd;
+            x += dir[0]; y += dir[1];
+          }
+          splitSimple(pts, loops);
+        }
+      }
+      return loops;
+    }
+
+    function splitSimple(pts, loops) {
+      let stack = [], pos = {};
+      for (let i = 0; i < pts.length; i++) {
+        const k = pts[i][0] + ',' + pts[i][1];
+        if (Object.prototype.hasOwnProperty.call(pos, k)) {
+          const at = pos[k];
+          const sub = stack.slice(at);
+          for (let j = at + 1; j < stack.length; j++) delete pos[stack[j][0] + ',' + stack[j][1]];
+          stack = stack.slice(0, at + 1);
+          if (sub.length >= 3) loops.push(sub);
+        } else {
+          pos[k] = stack.length;
+          stack.push(pts[i]);
+        }
+      }
+      if (stack.length >= 3) loops.push(stack);
+    }
+
+    function downloadGeneratedSvg() {
+      if (!generatedSvgString) return;
+      const blob = new Blob([generatedSvgString], { type: 'image/svg+xml' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'vectorized-laser-' + Date.now() + '.svg';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    function sendConvertedSvgToLaser() {
+      if (!generatedSvgString) return;
+      loadSvgTextIntoMarker(generatedSvgString);
+    }
+
+    // =========================================================================
+    // B. SVG 檔案解析為多邊形折線 (利用瀏覽器原生 SVGGeometryElement.getPointAtLength 精準採樣任意曲線)
+    // =========================================================================
+    function handleSvgUpload(file) {
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(evt) {
+        loadSvgTextIntoMarker(evt.target.result);
+      };
+      reader.readAsText(file);
+    }
+
+    function loadSvgTextIntoMarker(svgText) {
+      const stage = document.getElementById('svgMarkStage');
+      stage.innerHTML = svgText;
+      const svgEl = stage.querySelector('svg');
+      if (!svgEl) {
+        alert('無法識別有效的 <svg> 標籤');
+        return;
+      }
+
+      // 採樣所有幾何圖元 (<path>, <rect>, <circle>, <ellipse>, <polygon>, <polyline>, <line>)
+      const geomEls = svgEl.querySelectorAll('path, rect, circle, ellipse, polygon, polyline, line');
+      const rawPolys = [];
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+      geomEls.forEach(el => {
+        if (typeof el.getTotalLength !== 'function') return;
+        const totalLen = el.getTotalLength();
+        if (!(totalLen > 0)) return;
+
+        // 若為包含多個 M...Z 子路徑的 <path>，拆分每個子路徑分別採樣
+        if (el.tagName.toLowerCase() === 'path' && el.getAttribute('d')) {
+          const dAttr = el.getAttribute('d');
+          const subDs = dAttr.match(/[Mm][^Mm]*/g) || [dAttr];
+          subDs.forEach(subD => {
+            const tempPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            tempPath.setAttribute('d', subD);
+            svgEl.appendChild(tempPath);
+            const subLen = tempPath.getTotalLength();
+            if (subLen > 0) {
+              const steps = Math.min(400, Math.max(4, Math.ceil(subLen * 2)));
+              const pts = [];
+              for (let s = 0; s <= steps; s++) {
+                const pt = tempPath.getPointAtLength((s / steps) * subLen);
+                pts.push([pt.x, pt.y]);
+                if (pt.x < minX) minX = pt.x;
+                if (pt.y < minY) minY = pt.y;
+                if (pt.x > maxX) maxX = pt.x;
+                if (pt.y > maxY) maxY = pt.y;
+              }
+              const isClosed = /[Zz]\s*$/.test(subD.trim());
+              rawPolys.push({ points: pts, closed: isClosed });
+            }
+            svgEl.removeChild(tempPath);
+          });
+        } else {
+          const steps = Math.min(400, Math.max(12, Math.ceil(totalLen * 2)));
+          const pts = [];
+          for (let s = 0; s <= steps; s++) {
+            const pt = el.getPointAtLength((s / steps) * totalLen);
+            pts.push([pt.x, pt.y]);
+            if (pt.x < minX) minX = pt.x;
+            if (pt.y < minY) minY = pt.y;
+            if (pt.x > maxX) maxX = pt.x;
+            if (pt.y > maxY) maxY = pt.y;
+          }
+          const tag = el.tagName.toLowerCase();
+          const closed = (tag === 'rect' || tag === 'circle' || tag === 'ellipse' || tag === 'polygon');
+          rawPolys.push({ points: pts, closed: closed });
+        }
+      });
+
+      if (rawPolys.length === 0 || !isFinite(minX)) {
+        document.getElementById('svgMetaBar').textContent = '⚠ 找不到可雕刻的向量幾何路徑';
+        return;
+      }
+
+      const spanW = Math.max(0.001, maxX - minX);
+      const spanH = Math.max(0.001, maxY - minY);
+      svgAspectRatio = spanW / spanH;
+
+      // 歸一化座標至 0.0 ~ 1.0 比例
+      parsedPolylines = rawPolys.map(pl => ({
+        closed: pl.closed,
+        points: pl.points.map(p => [(p[0] - minX) / spanW, (p[1] - minY) / spanH])
+      }));
+
+      // 讀取 SVG 預設物理寬度 (若無則預設 25mm)
+      let initW = parseFloat(svgEl.getAttribute('width')) || 25;
+      if (initW > 85) initW = 25;
+      document.getElementById('svgMarkWidthMM').value = Math.round(initW * 100) / 100;
+      document.getElementById('svgMarkHeightMM').value = Math.round((initW / svgAspectRatio) * 100) / 100;
+
+      document.getElementById('btnSvgF1Preview').disabled = false;
+      document.getElementById('btnSvgF2Mark').disabled = false;
+      updateSvgMeta();
+    }
+
+    function recalcSvgDimensions(changed) {
+      const lock = document.getElementById('svgLockAspect').checked;
+      const wEl = document.getElementById('svgMarkWidthMM');
+      const hEl = document.getElementById('svgMarkHeightMM');
+      if (lock && svgAspectRatio > 0) {
+        if (changed === 'w') {
+          hEl.value = Math.round((parseFloat(wEl.value) / svgAspectRatio) * 100) / 100;
+        } else {
+          wEl.value = Math.round((parseFloat(hEl.value) * svgAspectRatio) * 100) / 100;
+        }
+      }
+      updateSvgMeta();
+    }
+
+    function updateSvgMeta() {
+      const w = document.getElementById('svgMarkWidthMM').value;
+      const h = document.getElementById('svgMarkHeightMM').value;
+      const totalPts = parsedPolylines.reduce((acc, pl) => acc + pl.points.length, 0);
+      document.getElementById('svgMetaBar').textContent =
+        '已載入 ' + parsedPolylines.length + ' 條獨立向量路徑 (共 ' + totalPts + ' 頂點) · 實際雕刻範圍: ' + w + ' × ' + h + ' mm';
+    }
+
+    async function previewSvgBoundingBox() {
+      const w = parseFloat(document.getElementById('svgMarkWidthMM').value) || 25;
+      const h = parseFloat(document.getElementById('svgMarkHeightMM').value) || 25;
+      const maxDim = Math.max(w, h);
+      await fetch('/api/preview/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ Shape: 'square', SizeMM: maxDim, StepDelayMs: 2090, TimeoutSec: 30 })
+      });
+    }
+
+    async function stopF1Preview() {
+      await fetch('/api/preview/stop', { method: 'POST' });
+    }
+
+    async function executeSvgLaserMark() {
+      if (parsedPolylines.length === 0) return;
+      const w = parseFloat(document.getElementById('svgMarkWidthMM').value) || 25;
+      const h = parseFloat(document.getElementById('svgMarkHeightMM').value) || 25;
+      const hatch = parseFloat(document.getElementById('svgHatchStep').value) || 0;
+      const power = parseFloat(document.getElementById('svgPowerPct').value) || 35;
+      const speed = parseInt(document.getElementById('svgSpeedWord').value, 10) || 450;
+
+      // 將歸一化座標縮放為實體毫米 (mm)
+      const scaledPolys = parsedPolylines.map(pl => ({
+        closed: pl.closed,
+        points: pl.points.map(p => [p[0] * w, p[1] * h])
+      }));
+
+      const pill = document.getElementById('laserStatePill');
+      pill.textContent = 'SVG 雷射出光雕刻中 (MO=1)...';
+      pill.className = 'status-pill pill-terra';
+
+      const res = await fetch('/api/vector/mark', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          width_mm: w,
+          height_mm: h,
+          polylines: scaledPolys,
+          hatch_step_mm: hatch,
+          scale_x: 1.0,
+          scale_y: 1.0,
+          power_pct: power,
+          speed_word: speed
+        })
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        alert('SVG 雷射雕刻失敗: ' + data.error);
+      }
+      pill.textContent = '雕刻完成 · 安全待機 (MO=0)';
+      pill.className = 'status-pill pill-sage';
+    }
+  </script>
+</body>
+</html>
