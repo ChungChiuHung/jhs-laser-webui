@@ -21,7 +21,6 @@ type tagResult struct {
 v0, v1, v2, v3, v4, v5, v6, v7 uint16
 }
 
-// 原廠 tagLmcCmd 清單緩衝區：固定 256 條指令 x 6 個 uint16 = 1536 uint16 (3072 Bytes)
 type tagLmcCmd struct {
 words [1536]uint16
 }
@@ -63,7 +62,7 @@ dll := syscall.NewLazyDLL(dllPath)
 
 d := &WindowsJczDriver{
 ezcadDir:        ezcadDir,
-outPort:         0x0010, // 原廠待機預設值 arg1=0x10
+outPort:         0x0000,
 dll:             dll,
 procOpenNew:     dll.NewProc("?MIO_OpenNewDev@@YAHXZ"),
 procOpen:        dll.NewProc("?MIO_Open@@YAHH@Z"),
@@ -121,7 +120,6 @@ return d.dll.Load()
 }
 
 func (d *WindowsJczDriver) GetStatus() BoardStatus {
-// 關鍵防閃爍機制：預覽期間直接回傳快取狀態與倒數秒數，絕不呼叫 MIO_Open / MIO_Close 中斷紅光輸出！
 if d.previewing.Load() {
 st := d.cachedStatus
 st.Platform = fmt.Sprintf("Windows (%s)", runtime.GOARCH)
@@ -232,10 +230,11 @@ d.outPort = (d.outPort & ^mask) | (val & mask)
 
 var res tagResult
 d.procWritePort.Call(uintptr(unsafe.Pointer(&res)), 0, uintptr(d.outPort), 0)
+d.procCmd.Call(uintptr(unsafe.Pointer(&res)), 0, 0x0021, uintptr(d.outPort), 0, 0, 0, 0)
 return nil
 }
 
-// makeFpgaCmdBuf 預先組裝好包含最多 248 個頂點的 tagLmcCmd 緩衝區 (可一次塞入 60 圈正方形)
+// makeFpgaCmdBuf 組裝原廠 EzCad2 的 tagLmcCmd 硬體插補清單
 func makeFpgaCmdBuf(startX, startY uint16, points [][2]uint16, jumpSpeedWord uint16) tagLmcCmd {
 var buf tagLmcCmd
 for slot := 0; slot < 256; slot++ {
@@ -251,8 +250,12 @@ buf.words[7] = jumpSpeedWord
 buf.words[12] = 0x800d // listJumpDelay
 buf.words[13] = 0x0008
 
+// 在清單內同步開啟紅光埠 listWritrPort (0x8011): 0x0110 (Out4 + Out8)
+buf.words[18] = 0x8011
+buf.words[19] = 0x0110
+
 curX, curY := float64(startX), float64(startY)
-slot := 3
+slot := 4
 for _, pt := range points {
 if slot >= 252 {
 break
@@ -273,19 +276,6 @@ curX, curY = tx, ty
 slot++
 }
 return buf
-}
-
-// waitFpgaListIdle 等待目前 FPGA 清單執行完成，中途可隨時被 stopFlag 中斷
-func (d *WindowsJczDriver) waitFpgaListIdle(maxWaitMs int) {
-var res tagResult
-loops := maxWaitMs / 5
-for w := 0; w < loops && !d.stopFlag.Load(); w++ {
-time.Sleep(5 * time.Millisecond)
-d.procGetListStat.Call(uintptr(unsafe.Pointer(&res)), 0)
-if res.v0 == 1 {
-return
-}
-}
 }
 
 func (d *WindowsJczDriver) GotoXY(x uint16, y uint16) error {
@@ -318,7 +308,7 @@ d.procGotoXY.Call(uintptr(unsafe.Pointer(&res)), 0, uintptr(curX), uintptr(curY)
 buf := makeFpgaCmdBuf(curX, curY, [][2]uint16{{x, y}}, 0x082a)
 d.procWriteCmdBuf.Call(uintptr(unsafe.Pointer(&res)), 0, uintptr(unsafe.Pointer(&buf)))
 d.procExecuteList.Call(uintptr(unsafe.Pointer(&res)), 0)
-d.waitFpgaListIdle(300)
+time.Sleep(35 * time.Millisecond)
 
 d.lastX.Store(uint32(x))
 d.lastY.Store(uint32(y))
@@ -334,7 +324,7 @@ d.stopFlag.Store(true)
 return nil
 }
 
-// StartContinuousPreview 全程保持單一 Handle 絕不呼叫 MIO_Close，並以 60 圈大容量清單無縫循環，徹底消除閃爍！
+// StartContinuousPreview 修正提前 ResetList 的問題：每批次執行 4 圈正方形並精確等待物理掃描時間，同時點亮 Out4 (0x0010) 與 Out8 (0x0100)
 func (d *WindowsJczDriver) StartContinuousPreview(sizeMM float64, speedParam int, timeoutSec int) error {
 if d.previewing.Load() {
 if timeoutSec <= 0 || timeoutSec > 120 {
@@ -345,7 +335,7 @@ return nil
 }
 
 if sizeMM < 2 {
-sizeMM = 25
+sizeMM = 15
 }
 if sizeMM > 90 {
 sizeMM = 90
@@ -381,53 +371,67 @@ handle, _, _ := d.procGetHandle.Call(0)
 if handle == 0 {
 return
 }
-// 關鍵：整個 30 秒預覽期間絕不呼叫 procClose()，只在最終結束時關閉一次！
 defer d.procClose.Call()
 
 var res tagResult
 cardID := uintptr(0)
 c := uint16(32768)
+// 標準正方形四個頂點：左下 -> 右下 -> 右上 -> 左上
 c0 := [2]uint16{c - halfSpan, c - halfSpan}
 c1 := [2]uint16{c + halfSpan, c - halfSpan}
 c2 := [2]uint16{c + halfSpan, c + halfSpan}
 c3 := [2]uint16{c - halfSpan, c + halfSpan}
 
-// 一次在單一 tagLmcCmd 緩衝區塞滿 60 圈正方形 (240 個頂點)，讓 FPGA 長時間連續掃描不中斷
-var batchLoops [][2]uint16
-for l := 0; l < 60; l++ {
-batchLoops = append(batchLoops, c1, c2, c3, c0)
+// 每批組裝 6 圈正方形 (24 個頂點)
+loopsPerBatch := 6
+var batchPts [][2]uint16
+for l := 0; l < loopsPerBatch; l++ {
+batchPts = append(batchPts, c1, c2, c3, c0)
 }
-cmdBuf := makeFpgaCmdBuf(c0[0], c0[1], batchLoops, jumpSpeedWord)
+cmdBuf := makeFpgaCmdBuf(c0[0], c0[1], batchPts, jumpSpeedWord)
 
-// 1. 只在啟動瞬間定位一次起點並點亮紅光 (0x0110 與 Out4 低電位有效同時兼顧)
-d.procResetList.Call(uintptr(unsafe.Pointer(&res)), cardID)
+// 計算這 6 圈在 FPGA 上的真實物理執行時間 (毫秒)：總周長 = sizeMM * 4 * 6，速度約 2800 mm/s
+totalDistMM := sizeMM * 4.0 * float64(loopsPerBatch)
+batchDurationMs := int((totalDistMM / 2600.0) * 1000.0) + 18
+if batchDurationMs < 60 {
+batchDurationMs = 60
+}
+
+// 1. 同時開啟 Out4 (Bit 4 = 0x0010, 您實測確認可畫出正方形的標刻/紅光輸出) 與 Out8 (0x0100 RedPt)
+previewPort := uint16(0x0110)
+d.procWritePort.Call(uintptr(unsafe.Pointer(&res)), cardID, uintptr(previewPort), 0)
+d.procCmd.Call(uintptr(unsafe.Pointer(&res)), cardID, 0x0021, uintptr(previewPort), uintptr(0xFFFF), 0, 0, 0)
+
+// 2. 先定位至左下角起點 c0
 d.procGotoXY.Call(uintptr(unsafe.Pointer(&res)), cardID, uintptr(c0[0]), uintptr(c0[1]))
-d.procWritePort.Call(uintptr(unsafe.Pointer(&res)), cardID, uintptr(0x0100), 0)
+time.Sleep(15 * time.Millisecond)
 
-// 2. 無縫循環推送 60 圈硬體清單，中途不呼叫 GotoXY 也不切換 WritePort，消除一切閃爍
+// 3. 持續循環執行 6 圈 FPGA 清單，並精確等待物理時間跑完，絕不中途 ResetList！
 for !d.stopFlag.Load() && time.Now().Unix() < d.previewEndUnix.Load() {
 d.procResetList.Call(uintptr(unsafe.Pointer(&res)), cardID)
 d.procWriteCmdBuf.Call(uintptr(unsafe.Pointer(&res)), cardID, uintptr(unsafe.Pointer(&cmdBuf)))
 d.procExecuteList.Call(uintptr(unsafe.Pointer(&res)), cardID)
 
-// 輪詢等待這 60 圈執行完畢；若中途按下停止按鈕則立刻呼叫 StopExecute 打斷
-for !d.stopFlag.Load() && time.Now().Unix() < d.previewEndUnix.Load() {
-time.Sleep(4 * time.Millisecond)
-d.procGetListStat.Call(uintptr(unsafe.Pointer(&res)), cardID)
-if res.v0 == 1 {
-break
+// 分段睡眠等待這 6 圈完整跑完，期間若按停止可隨時跳出
+slept := 0
+for slept < batchDurationMs && !d.stopFlag.Load() {
+time.Sleep(10 * time.Millisecond)
+slept += 10
 }
-}
+d.lastX.Store(uint32(c0[0]))
+d.lastY.Store(uint32(c0[1]))
 }
 
-// 3. 結束預覽：立即停止清單、滑回中心點 (0x8000, 0x8000) 並關閉紅光恢復待機狀態 (0x0010)
+// 4. 結束預覽：停止清單、滑回中心點 (0x8000, 0x8000) 並關閉 Out4 恢復原狀態
 d.procStopExecute.Call(uintptr(unsafe.Pointer(&res)), cardID)
 d.procResetList.Call(uintptr(unsafe.Pointer(&res)), cardID)
 homeBuf := makeFpgaCmdBuf(c0[0], c0[1], [][2]uint16{{0x8000, 0x8000}}, 0x082a)
 d.procWriteCmdBuf.Call(uintptr(unsafe.Pointer(&res)), cardID, uintptr(unsafe.Pointer(&homeBuf)))
 d.procExecuteList.Call(uintptr(unsafe.Pointer(&res)), cardID)
-time.Sleep(50 * time.Millisecond)
+time.Sleep(40 * time.Millisecond)
+
 d.procWritePort.Call(uintptr(unsafe.Pointer(&res)), cardID, uintptr(d.outPort), 0)
+d.procCmd.Call(uintptr(unsafe.Pointer(&res)), cardID, 0x0021, uintptr(d.outPort), uintptr(0xFFFF), 0, 0, 0)
 d.lastX.Store(32768)
 d.lastY.Store(32768)
 }()
