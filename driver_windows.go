@@ -22,26 +22,28 @@ v0, v1, v2, v3, v4, v5, v6, v7 uint16
 }
 
 type WindowsJczDriver struct {
-mu            sync.Mutex
-ezcadDir      string
-outPort       uint16
-previewing    atomic.Bool
-stopFlag      atomic.Bool
+mu             sync.Mutex
+ezcadDir       string
+outPort        uint16
+galvoZ         uint16
+axis0Steps     int32
+previewing     atomic.Bool
+stopFlag       atomic.Bool
 previewEndUnix atomic.Int64
-lastX         atomic.Uint32
-lastY         atomic.Uint32
-dll           *syscall.LazyDLL
-procOpenNew   *syscall.LazyProc
-procOpen      *syscall.LazyProc
-procGetHandle *syscall.LazyProc
-procGetState  *syscall.LazyProc
-procGetVer    *syscall.LazyProc
-procGetSN     *syscall.LazyProc
-procReadPort  *syscall.LazyProc
-procWritePort *syscall.LazyProc
-procCmd       *syscall.LazyProc
-procChipID    *syscall.LazyProc
-procClose     *syscall.LazyProc
+lastX          atomic.Uint32
+lastY          atomic.Uint32
+dll            *syscall.LazyDLL
+procOpenNew    *syscall.LazyProc
+procOpen       *syscall.LazyProc
+procGetHandle  *syscall.LazyProc
+procGetState   *syscall.LazyProc
+procGetVer     *syscall.LazyProc
+procGetSN      *syscall.LazyProc
+procReadPort   *syscall.LazyProc
+procWritePort  *syscall.LazyProc
+procCmd        *syscall.LazyProc
+procChipID     *syscall.LazyProc
+procClose      *syscall.LazyProc
 }
 
 func NewLaserController(ezcadDir string) LaserController {
@@ -50,6 +52,7 @@ dll := syscall.NewLazyDLL(dllPath)
 
 d := &WindowsJczDriver{
 ezcadDir:      ezcadDir,
+galvoZ:        32768,
 dll:           dll,
 procOpenNew:   dll.NewProc("?MIO_OpenNewDev@@YAHXZ"),
 procOpen:      dll.NewProc("?MIO_Open@@YAHH@Z"),
@@ -159,8 +162,19 @@ status.ListStateHex = fmt.Sprintf("0x%04X", res.v0)
 d.procCmd.Call(uintptr(unsafe.Pointer(&res)), cardID, 0x000c, 0, 0, 0, 0, 0)
 status.GalvoX = res.v1
 status.GalvoY = res.v2
+status.GalvoZ = d.galvoZ
 d.lastX.Store(uint32(res.v1))
 d.lastY.Store(uint32(res.v2))
+
+// 讀取擴展軸 0 步數座標 (GetAxisPos: 0x002a)，若板卡回傳非 0 則同步更新
+d.procCmd.Call(uintptr(unsafe.Pointer(&res)), cardID, 0x002a, 0, 0, 0, 0, 0)
+hwSteps := int32(uint32(res.v1) | (uint32(res.v2) << 16))
+if hwSteps != 0 {
+d.axis0Steps = hwSteps
+}
+status.Axis0Steps = d.axis0Steps
+// 依據 markcfg7: AXISSTEPPERRO0=200, AXISDISTPERRO0=5.0mm -> 40 steps/mm
+status.Axis0MM = float64(d.axis0Steps) / 40.0
 
 d.procReadPort.Call(uintptr(unsafe.Pointer(&res)), cardID)
 ioVal := res.v1
@@ -204,6 +218,100 @@ d.outPort = (d.outPort & ^mask) | (val & mask)
 var res tagResult
 d.procWritePort.Call(uintptr(unsafe.Pointer(&res)), 0, uintptr(d.outPort), uintptr(0xFFFF))
 d.procCmd.Call(uintptr(unsafe.Pointer(&res)), 0, 0x0021, uintptr(d.outPort), uintptr(0xFFFF), 0, 0, 0)
+return nil
+}
+
+// MoveAxisRelMM 控制 CON4 擴展軸 (Z軸升降馬達或旋轉軸) 相對移動指定毫米數
+// 依據 markcfg7: 每轉 200 步 / 導程 5mm = 40 步/mm
+func (d *WindowsJczDriver) MoveAxisRelMM(axis int, deltaMM float64, speed int) error {
+d.mu.Lock()
+defer d.mu.Unlock()
+
+if err := d.prepareEnv(); err != nil {
+return err
+}
+ret, _, _ := d.procOpenNew.Call()
+if int32(ret) <= 0 {
+d.procOpen.Call(0)
+}
+handle, _, _ := d.procGetHandle.Call(0)
+if handle == 0 {
+return fmt.Errorf("無法開啟控制卡")
+}
+defer d.procClose.Call()
+
+if speed < 100 {
+speed = 1000
+}
+if speed > 5000 {
+speed = 5000
+}
+
+deltaSteps := int32(math.Round(deltaMM * 40.0))
+d.axis0Steps += deltaSteps
+uPos := uint32(d.axis0Steps)
+low16 := uint16(uPos & 0xFFFF)
+high16 := uint16((uPos >> 16) & 0xFFFF)
+
+var res tagResult
+cardID := uintptr(0)
+// 1. 設定擴展軸運動速度參數 SetAxisMotionParam (0x0026): MinSpd=100, MaxSpd=speed
+d.procCmd.Call(uintptr(unsafe.Pointer(&res)), cardID, 0x0026, uintptr(100), uintptr(speed), uintptr(axis), 0, 0)
+// 2. 下達擴展軸移動指令 MoveAxisTo (0x0029): parm1=low16, parm2=high16, parm3=axis
+d.procCmd.Call(uintptr(unsafe.Pointer(&res)), cardID, 0x0029, uintptr(low16), uintptr(high16), uintptr(axis), 0, 0)
+return nil
+}
+
+// AxisGoOrigin 命令 CON4 擴展軸執行自動回原點 (0x0028)
+func (d *WindowsJczDriver) AxisGoOrigin(axis int) error {
+d.mu.Lock()
+defer d.mu.Unlock()
+
+if err := d.prepareEnv(); err != nil {
+return err
+}
+ret, _, _ := d.procOpenNew.Call()
+if int32(ret) <= 0 {
+d.procOpen.Call(0)
+}
+handle, _, _ := d.procGetHandle.Call(0)
+if handle == 0 {
+return fmt.Errorf("無法開啟控制卡")
+}
+defer d.procClose.Call()
+
+var res tagResult
+cardID := uintptr(0)
+// SetAxisOriginParam (0x0027) & AxisGoOrigin (0x0028)
+d.procCmd.Call(uintptr(unsafe.Pointer(&res)), cardID, 0x0027, uintptr(axis), uintptr(100), 0, 0, 0)
+d.procCmd.Call(uintptr(unsafe.Pointer(&res)), cardID, 0x0028, uintptr(axis), 0, 0, 0, 0)
+d.axis0Steps = 0
+return nil
+}
+
+// SetGalvoZ 控制 CON1 3D 動態聚焦振鏡 Z 軸 DAC 數值 (ENABLEZ 0x003a + SETZDATA 0x003b)
+func (d *WindowsJczDriver) SetGalvoZ(zDac uint16) error {
+d.mu.Lock()
+defer d.mu.Unlock()
+
+if err := d.prepareEnv(); err != nil {
+return err
+}
+ret, _, _ := d.procOpenNew.Call()
+if int32(ret) <= 0 {
+d.procOpen.Call(0)
+}
+handle, _, _ := d.procGetHandle.Call(0)
+if handle == 0 {
+return fmt.Errorf("無法開啟控制卡")
+}
+defer d.procClose.Call()
+
+d.galvoZ = zDac
+var res tagResult
+cardID := uintptr(0)
+d.procCmd.Call(uintptr(unsafe.Pointer(&res)), cardID, 0x003a, 1, 0, 0, 0, 0)
+d.procCmd.Call(uintptr(unsafe.Pointer(&res)), cardID, 0x003b, uintptr(zDac), 0, 0, 0, 0)
 return nil
 }
 
@@ -258,16 +366,13 @@ d.ultraSilentGlide(curX, curY, x, y)
 return nil
 }
 
-// StopPreview 立即通知背景持續預覽迴圈停止
 func (d *WindowsJczDriver) StopPreview() error {
 d.stopFlag.Store(true)
 return nil
 }
 
-// StartContinuousPreview 啟動帶有自動逾時保護 (預設 30 秒) 的背景 0dB 無聲循環預覽
 func (d *WindowsJczDriver) StartContinuousPreview(sizeMM float64, smoothSteps int, timeoutSec int) error {
 if d.previewing.Load() {
-// 若已在預覽中，重新延長倒數計時
 if timeoutSec <= 0 || timeoutSec > 120 {
 timeoutSec = 30
 }
@@ -303,7 +408,6 @@ c := 32768.0
 firstX := uint16(c + halfSpan)
 firstY := uint16(c)
 
-// 1. 取得鎖：開啟紅光 (Out4 + Out8) 並無聲滑行至預覽框起點
 d.mu.Lock()
 if err := d.prepareEnv(); err == nil {
 ret, _, _ := d.procOpenNew.Call()
@@ -329,7 +433,6 @@ d.mu.Unlock()
 var lastX, lastY uint16 = firstX, firstY
 step := 0
 
-// 2. 持續循環掃描，每批次執行 160 個微步後短暫讓出鎖，確保前端每秒狀態監控與手動停止零延遲
 for !d.stopFlag.Load() && time.Now().Unix() < d.previewEndUnix.Load() {
 d.mu.Lock()
 if err := d.prepareEnv(); err == nil {
@@ -374,7 +477,6 @@ d.mu.Unlock()
 runtime.Gosched()
 }
 
-// 3. 結束預覽 (手動停止或 30 秒到期)：關閉紅光輸出並無聲滑回中心點 (32768, 32768)
 d.mu.Lock()
 if err := d.prepareEnv(); err == nil {
 ret, _, _ := d.procOpenNew.Call()
@@ -395,7 +497,6 @@ d.mu.Unlock()
 return nil
 }
 
-// RedLightPreview 單次 2 圈無聲預覽 (約 3 秒自動完成)
 func (d *WindowsJczDriver) RedLightPreview(sizeMM float64, smoothSteps int) error {
 return d.StartContinuousPreview(sizeMM, smoothSteps, 3)
 }

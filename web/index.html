@@ -3,11 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>JHS 雷射打標設備 Web 監控中心 (持續預覽對位版)</title>
+  <title>JHS 雷射打標設備 Web 監控中心 (含 Z 軸與擴展軸控制)</title>
   <style>
     :root { --bg: #0f172a; --card: #1e293b; --text: #f8fafc; --muted: #94a3b8; --ok: #22c55e; --warn: #f59e0b; --err: #ef4444; --accent: #38bdf8; }
     body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; }
-    .container { max-width: 1120px; margin: 0 auto; }
+    .container { max-width: 1140px; margin: 0 auto; }
     header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #334155; padding-bottom: 14px; margin-bottom: 16px; }
     .badge { padding: 6px 12px; border-radius: 999px; font-weight: 600; font-size: 13.5px; }
     .badge.ok { background: rgba(34,197,94,0.2); color: var(--ok); }
@@ -15,7 +15,7 @@
     .badge.err { background: rgba(239,68,68,0.2); color: var(--err); }
     .status-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-bottom: 16px; }
     .status-box { background: #162032; border: 1px solid #334155; border-radius: 10px; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
     .card { background: var(--card); border-radius: 12px; padding: 18px; border: 1px solid #334155; }
     .card h3 { margin-top: 0; color: var(--accent); font-size: 16px; border-bottom: 1px solid #334155; padding-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
     .kv { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px dashed #334155; font-size: 13.5px; }
@@ -43,7 +43,7 @@
   <div class="container">
     <header>
       <div>
-        <h1 style="margin:0; font-size:22px;">JHS 雷射打標設備監控面板 <span style="font-size:13px; color:var(--ok);">[0dB 持續對位預覽 + 30秒保護版]</span></h1>
+        <h1 style="margin:0; font-size:22px;">JHS 雷射打標設備監控面板 <span style="font-size:13px; color:var(--ok);">[含 Z 軸升降 + 30秒預覽版]</span></h1>
         <small id="platform" style="color:var(--muted);">載入中...</small>
       </div>
       <div style="display:flex; gap:12px; align-items:center;">
@@ -111,13 +111,42 @@
             </select>
           </div>
           <div style="display:flex; gap:8px; flex-wrap:wrap;">
-            <button class="btn-sm" id="btnStartLoop" onclick="startContinuousPreview()" style="background:var(--ok); color:#0f172a; flex:1;">▶ 啟動 30 秒持續預覽 (雙手對位)</button>
-            <button class="btn-sm" id="btnStopLoop" onclick="stopContinuousPreview()" style="background:var(--err); color:#fff; flex:1;">■ 立即停止預覽 (歸零)</button>
+            <button class="btn-sm" onclick="startContinuousPreview()" style="background:var(--ok); color:#0f172a; flex:1;">▶ 啟動 30 秒持續預覽</button>
+            <button class="btn-sm" onclick="stopContinuousPreview()" style="background:var(--err); color:#fff; flex:1;">■ 立即停止預覽</button>
           </div>
           <div id="previewBanner" class="preview-banner">
             <span>● 紅光預覽持續掃描中... 自動停止倒數：<b id="remainSec" style="font-size:16px; color:#fff;">30</b> 秒</span>
             <button class="btn-sm" onclick="stopContinuousPreview()" style="background:#fff; color:#dc2626; padding:3px 10px;">立即停止</button>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 新增 Z 軸 / 擴展軸步進馬達與 3D 動態聚焦控制面板 -->
+    <div class="card" style="margin-top:14px; border-color:rgba(56,189,248,0.4);">
+      <h3>
+        <span>Z 軸 / 擴展軸步進馬達升降與焦距控制 (CON4 MoveAxisTo 0x0029 / SETZDATA 0x003B)</span>
+        <span style="font-size:13px; color:var(--warn); font-family:monospace;" id="axisPosDisplay">位置: 0.00 mm (0 步)</span>
+      </h3>
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; font-size:13px;">
+          通道:
+          <select id="axisChannel">
+            <option value="0" selected>擴展軸 0 (CON4 XDIR/XPUL - 已啟用)</option>
+            <option value="1">擴展軸 1 (CON4 YDIR/YPUL)</option>
+          </select>
+          速度(pps): <input type="number" id="axisSpeed" value="1500" min="100" max="5000" style="width:65px;">
+          <button class="btn-sm" onclick="jogAxis(5.0)" style="background:var(--accent);">▲ 上升 +5mm</button>
+          <button class="btn-sm" onclick="jogAxis(1.0)" style="background:var(--accent);">▲ +1mm</button>
+          <button class="btn-sm" onclick="jogAxis(0.2)" style="background:#0284c7; color:#fff;">▲ +0.2mm</button>
+          <button class="btn-sm" onclick="jogAxis(-0.2)" style="background:#0284c7; color:#fff;">▼ -0.2mm</button>
+          <button class="btn-sm" onclick="jogAxis(-1.0)" style="background:var(--warn);">▼ -1mm</button>
+          <button class="btn-sm" onclick="jogAxis(-5.0)" style="background:var(--warn);">▼ 下降 -5mm</button>
+          <button class="btn-sm" onclick="axisOrigin()" style="background:#475569; color:#fff;">回原點 (0x0028)</button>
+        </div>
+        <div style="display:flex; gap:6px; align-items:center; font-size:12.5px; border-left:1px solid #334155; padding-left:12px;">
+          3D振鏡Z(0x003B): <input type="number" id="inputGalvoZ" value="32768" min="0" max="65535" style="width:65px;">
+          <button class="btn-sm" onclick="setGalvoZ()" style="background:#64748b; color:#fff;">設定Z焦距</button>
         </div>
       </div>
     </div>
@@ -196,11 +225,14 @@
         document.getElementById('totalTime').textContent = sec + ' 秒 (約 ' + (sec / 3600).toFixed(1) + ' 小時)';
 
         const listStr = data.list_ready ? '就緒' : '忙碌';
-        document.getElementById('galvoXY').textContent = listStr + ' | X: ' + data.galvo_x + ' , Y: ' + data.galvo_y;
+        document.getElementById('galvoXY').textContent = listStr + ' | X: ' + data.galvo_x + ' , Y: ' + data.galvo_y + ' , Z: ' + (data.galvo_z || 32768);
         document.getElementById('ioHex').textContent = data.input_port_hex;
         document.getElementById('outHex').textContent = data.output_port_hex || '0x0000';
 
-        // 更新持續預覽倒數計時橫幅與狀態標籤
+        // 更新 Z 軸 / 擴展軸位置顯示
+        const mmVal = (data.axis0_mm || 0).toFixed(2);
+        document.getElementById('axisPosDisplay').textContent = '目前位置: ' + mmVal + ' mm (' + (data.axis0_steps || 0) + ' 步)';
+
         const pBanner = document.getElementById('previewBanner');
         const pBadge = document.getElementById('previewBadge');
         if (data.preview_active) {
@@ -333,6 +365,37 @@
 
     async function stopContinuousPreview() {
       await fetch('/api/preview/stop', { method: 'POST' });
+      fetchStatus();
+    }
+
+    async function jogAxis(deltaMM) {
+      const axis = parseInt(document.getElementById('axisChannel').value, 10) || 0;
+      const speed = parseInt(document.getElementById('axisSpeed').value, 10) || 1500;
+      await fetch('/api/axis/move', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({Axis: axis, DeltaMM: deltaMM, Speed: speed})
+      });
+      fetchStatus();
+    }
+
+    async function axisOrigin() {
+      const axis = parseInt(document.getElementById('axisChannel').value, 10) || 0;
+      await fetch('/api/axis/origin', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({Axis: axis})
+      });
+      fetchStatus();
+    }
+
+    async function setGalvoZ() {
+      const zDac = parseInt(document.getElementById('inputGalvoZ').value, 10) || 32768;
+      await fetch('/api/galvoz', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ZDac: zDac})
+      });
       fetchStatus();
     }
 

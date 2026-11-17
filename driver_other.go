@@ -4,6 +4,7 @@ package main
 
 import (
 "fmt"
+"math"
 "runtime"
 "sync"
 "time"
@@ -13,6 +14,8 @@ type SimulatedJczDriver struct {
 mu         sync.Mutex
 galvoX     uint16
 galvoY     uint16
+galvoZ     uint16
+axis0Steps int32
 inPort     uint16
 outPort    uint16
 previewEnd int64
@@ -22,6 +25,7 @@ func NewLaserController(ezcadDir string) LaserController {
 return &SimulatedJczDriver{
 galvoX: 32768,
 galvoY: 32768,
+galvoZ: 32768,
 inPort: 0xC01F,
 }
 }
@@ -48,6 +52,9 @@ ListReady:        true,
 ListStateHex:     "0x0001",
 GalvoX:           d.galvoX,
 GalvoY:           d.galvoY,
+GalvoZ:           d.galvoZ,
+Axis0Steps:       d.axis0Steps,
+Axis0MM:          float64(d.axis0Steps) / 40.0,
 InputPortHex:     fmt.Sprintf("0x%04X", d.inPort),
 InputPortBin:     fmt.Sprintf("%016b", d.inPort),
 OutputPortHex:    fmt.Sprintf("0x%04X", d.outPort),
@@ -95,5 +102,26 @@ func (d *SimulatedJczDriver) StopPreview() error {
 d.mu.Lock()
 defer d.mu.Unlock()
 d.previewEnd = 0
+return nil
+}
+
+func (d *SimulatedJczDriver) MoveAxisRelMM(axis int, deltaMM float64, speed int) error {
+d.mu.Lock()
+defer d.mu.Unlock()
+d.axis0Steps += int32(math.Round(deltaMM * 40.0))
+return nil
+}
+
+func (d *SimulatedJczDriver) AxisGoOrigin(axis int) error {
+d.mu.Lock()
+defer d.mu.Unlock()
+d.axis0Steps = 0
+return nil
+}
+
+func (d *SimulatedJczDriver) SetGalvoZ(zDac uint16) error {
+d.mu.Lock()
+defer d.mu.Unlock()
+d.galvoZ = zDac
 return nil
 }
