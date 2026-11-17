@@ -132,7 +132,7 @@ d.lastY.Store(32768)
 return d
 }
 
-// mmToGalvoDAC 依照 markcfg7 的 GALVOX 軸映射與 Aspect/100.0 正向比例進行光學校正
+// mmToGalvoDAC 依照原廠封包驗證之比例 (X 對應 Aspect0=83.684, Y 對應 Aspect1=91.371，比值 0.91587) 進行精確換算
 func (d *WindowsJczDriver) mmToGalvoDAC(xMM, yMM float64, isRedLight bool) (uint16, uint16) {
 if isRedLight {
 xMM = xMM*d.calib.RedScaleX + d.calib.RedOffsetX
@@ -147,42 +147,27 @@ halfField = 55.0
 nx := xMM / halfField
 ny := yMM / halfField
 
-// 依據 GALVOX=1 決定 X 與 Y 分別對應哪一組振鏡通道參數 (0 或 1)
-aspX, aspY := d.calib.Aspect0, d.calib.Aspect1
-distX, distY := d.calib.Distor0, d.calib.Distor1
-hvX, hvY := d.calib.HorVer0, d.calib.HorVer1
-trpX, trpY := d.calib.TrapeDistor0, d.calib.TrapeDistor1
-negX, negY := d.calib.Negate0, d.calib.Negate1
+// 1. 平行四邊形垂直度校正 (GALVOHORVER0 / GALVOHORVER1)
+nx = nx + (d.calib.HorVer0-1.0)*ny
+ny = ny + (d.calib.HorVer1-1.0)*nx
 
-if int(math.Round(d.calib.GalvoXSwap)) == 1 {
-aspX, aspY = d.calib.Aspect1, d.calib.Aspect0
-distX, distY = d.calib.Distor1, d.calib.Distor0
-hvX, hvY = d.calib.HorVer1, d.calib.HorVer0
-trpX, trpY = d.calib.TrapeDistor1, d.calib.TrapeDistor0
-negX, negY = d.calib.Negate1, d.calib.Negate0
-}
+// 2. 梯形畸變校正 (GALVOTRAPEDISTOR0 / GALVOTRAPEDISTOR1)
+nx = nx * (1.0 + (d.calib.TrapeDistor0-1.0)*ny)
+ny = ny * (1.0 + (d.calib.TrapeDistor1-1.0)*nx)
 
-// 1. 平行四邊形垂直度校正
-nx = nx + (hvX-1.0)*ny
-ny = ny + (hvY-1.0)*nx
-
-// 2. 梯形畸變校正
-nx = nx * (1.0 + (trpX-1.0)*ny)
-ny = ny * (1.0 + (trpY-1.0)*nx)
-
-// 3. 枕狀/桶狀畸變校正
+// 3. 枕狀/桶狀畸變校正 (GALVODISTOR0 / GALVODISTOR1)
 r2 := nx*nx + ny*ny
-nx = nx * (1.0 + (distX-1.0)*r2)
-ny = ny * (1.0 + (distY-1.0)*r2)
+nx = nx * (1.0 + (d.calib.Distor0-1.0)*r2)
+ny = ny * (1.0 + (d.calib.Distor1-1.0)*r2)
 
-// 4. 關鍵修正：套用正向比例 (Aspect / 100.0)，消除先前的反向放大倍差
-scaleX := aspX / 100.0
-scaleY := aspY / 100.0
+// 4. 關鍵修正：X 軸固定套用 Aspect0 (83.684)，Y 軸固定套用 Aspect1 (91.371)，使 ΔX/ΔY = 0.91587 完全吻合原廠封包
+scaleX := d.calib.Aspect0 / 100.0
+scaleY := d.calib.Aspect1 / 100.0
 
-if int(math.Round(negX)) == 1 {
+if int(math.Round(d.calib.Negate0)) == 1 {
 nx = -nx
 }
-if int(math.Round(negY)) == 1 {
+if int(math.Round(d.calib.Negate1)) == 1 {
 ny = -ny
 }
 
