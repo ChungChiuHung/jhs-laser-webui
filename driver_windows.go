@@ -21,6 +21,7 @@ type tagResult struct {
 v0, v1, v2, v3, v4, v5, v6, v7 uint16
 }
 
+// 256 個 Slot x 6 個 uint16 = 1536 uint16 (3072 Bytes)
 type tagLmcCmd struct {
 words [1536]uint16
 }
@@ -51,6 +52,8 @@ procWriteCmdBuf *syscall.LazyProc
 procExecuteList *syscall.LazyProc
 procStopExecute *syscall.LazyProc
 procGetListStat *syscall.LazyProc
+procSetCtrlMode *syscall.LazyProc
+procSetStandby  *syscall.LazyProc
 procCmd         *syscall.LazyProc
 procChipID      *syscall.LazyProc
 procClose       *syscall.LazyProc
@@ -62,7 +65,7 @@ dll := syscall.NewLazyDLL(dllPath)
 
 d := &WindowsJczDriver{
 ezcadDir:        ezcadDir,
-outPort:         0x0000,
+outPort:         0x0010, // 原廠待機狀態: 0x0010 (Out4 Active-Low 預設高電位關閉)
 dll:             dll,
 procOpenNew:     dll.NewProc("?MIO_OpenNewDev@@YAHXZ"),
 procOpen:        dll.NewProc("?MIO_Open@@YAHH@Z"),
@@ -79,6 +82,8 @@ procWriteCmdBuf: dll.NewProc("?MIO_WriteCmdBuf@@YA?AUtagResult@@EPAUtagLmcCmd@@@
 procExecuteList: dll.NewProc("?MIO_ExecuteList@@YA?AUtagResult@@E@Z"),
 procStopExecute: dll.NewProc("?MIO_StopExecute@@YA?AUtagResult@@E@Z"),
 procGetListStat: dll.NewProc("?MIO_GetListStatus@@YA?AUtagResult@@E@Z"),
+procSetCtrlMode: dll.NewProc("?MIO_SetControlMode@@YA?AUtagResult@@EG@Z"),
+procSetStandby:  dll.NewProc("?MIO_SetStandby@@YA?AUtagResult@@EGGH@Z"),
 procCmd:         dll.NewProc("?MIO_Cmd@@YA?AUtagResult@@EGGGGGG@Z"),
 procChipID:      dll.NewProc("?MIO_GetChipIDState@@YAHEAAG@Z"),
 procClose:       dll.NewProc("?MIO_Close@@YAXXZ"),
@@ -120,6 +125,7 @@ return d.dll.Load()
 }
 
 func (d *WindowsJczDriver) GetStatus() BoardStatus {
+// 預覽期間直接回傳快取與倒數秒數，絕不干擾控制卡 USB 串流
 if d.previewing.Load() {
 st := d.cachedStatus
 st.Platform = fmt.Sprintf("Windows (%s)", runtime.GOARCH)
@@ -230,51 +236,95 @@ d.outPort = (d.outPort & ^mask) | (val & mask)
 
 var res tagResult
 d.procWritePort.Call(uintptr(unsafe.Pointer(&res)), 0, uintptr(d.outPort), 0)
-d.procCmd.Call(uintptr(unsafe.Pointer(&res)), 0, 0x0021, uintptr(d.outPort), 0, 0, 0, 0)
 return nil
 }
 
-// makeFpgaCmdBuf 組裝原廠 EzCad2 的 tagLmcCmd 硬體插補清單
-func makeFpgaCmdBuf(startX, startY uint16, points [][2]uint16, jumpSpeedWord uint16) tagLmcCmd {
+// buildFirstPreviewBuf 100% 複製 Frida 攔截到的原廠第 1 個 WriteCmdBuf：
+// Slot 0: 0x8051 (0)
+// Slot 1: 0x8006 (jumpSpeed = 0x082a)
+// Slot 2: 0x800c (markSpeed = 0x082a)
+// Slot 3: 0x8007 (0)
+// Slot 4: 0x8008 (0)
+// Slot 5: 0x800f (0)
+// Slot 6: 0x800d (jumpDelay = 0，轉角零停頓無聲滑過！)
+// Slot 7 ~ 255: 全部填滿 0x8001 正方形四頂點循環 (絕不放 0x8002 EndOfList！)
+func buildFirstPreviewBuf(startX, startY uint16, corners [4][2]uint16, speedWord uint16) (tagLmcCmd, int, uint16, uint16) {
 var buf tagLmcCmd
-for slot := 0; slot < 256; slot++ {
-buf.words[slot*6] = 0x8002 // listEndofList
+if speedWord == 0 {
+speedWord = 0x082a
 }
+buf.words[0*6+0] = 0x8051
+buf.words[1*6+0] = 0x8006
+buf.words[1*6+1] = speedWord
+buf.words[2*6+0] = 0x800c
+buf.words[2*6+1] = speedWord
+buf.words[3*6+0] = 0x8007
+buf.words[4*6+0] = 0x8008
+buf.words[5*6+0] = 0x800f
+buf.words[6*6+0] = 0x800d
+buf.words[6*6+1] = 0x0000
 
-buf.words[0] = 0x8051 // ReadyMark
-if jumpSpeedWord == 0 {
-jumpSpeedWord = 0x082a
-}
-buf.words[6] = 0x8006 // listJumpSpeed
-buf.words[7] = jumpSpeedWord
-buf.words[12] = 0x800d // listJumpDelay
-buf.words[13] = 0x0008
-
-// 在清單內同步開啟紅光埠 listWritrPort (0x8011): 0x0110 (Out4 + Out8)
-buf.words[18] = 0x8011
-buf.words[19] = 0x0110
-
-curX, curY := float64(startX), float64(startY)
-slot := 4
-for _, pt := range points {
-if slot >= 252 {
-break
-}
-tx, ty := float64(pt[0]), float64(pt[1])
-dist := uint16(math.Hypot(tx-curX, ty-curY))
-if dist == 0 {
-dist = 1
-}
+curX, curY := startX, startY
+cIdx := 0
+for slot := 7; slot < 256; slot++ {
+pt := corners[cIdx]
+dist := uint16(math.Hypot(float64(pt[0])-float64(curX), float64(pt[1])-float64(curY)))
 base := slot * 6
-buf.words[base+0] = 0x8001 // listJumpTo
+buf.words[base+0] = 0x8001
 buf.words[base+1] = pt[0]
 buf.words[base+2] = pt[1]
-buf.words[base+3] = 0x0000
+buf.words[base+3] = 0
 buf.words[base+4] = dist
-buf.words[base+5] = 0x0000
-curX, curY = tx, ty
-slot++
+buf.words[base+5] = 0
+curX, curY = pt[0], pt[1]
+cIdx = (cIdx + 1) % 4
 }
+return buf, cIdx, curX, curY
+}
+
+// buildContPreviewBuf 100% 複製 Frida 攔截到的原廠第 2 個以後的 WriteCmdBuf：
+// Slot 0 ~ Slot 255 全部 256 個槽位通通填滿 0x8001 (共 64 圈正方形)，無縫銜接上一塊 Buffer！
+func buildContPreviewBuf(startX, startY uint16, corners [4][2]uint16, startCornerIdx int) (tagLmcCmd, int, uint16, uint16) {
+var buf tagLmcCmd
+curX, curY := startX, startY
+cIdx := startCornerIdx
+for slot := 0; slot < 256; slot++ {
+pt := corners[cIdx]
+dist := uint16(math.Hypot(float64(pt[0])-float64(curX), float64(pt[1])-float64(curY)))
+base := slot * 6
+buf.words[base+0] = 0x8001
+buf.words[base+1] = pt[0]
+buf.words[base+2] = pt[1]
+buf.words[base+3] = 0
+buf.words[base+4] = dist
+buf.words[base+5] = 0
+curX, curY = pt[0], pt[1]
+cIdx = (cIdx + 1) % 4
+}
+return buf, cIdx, curX, curY
+}
+
+// buildMoveSingleBuf 100% 複製 Frida 攔截到的原廠停止歸零清單 (Slot 0~3 + Slot 4 起全填 0x8002)
+func buildMoveSingleBuf(fromX, fromY, toX, toY uint16, speedWord uint16) tagLmcCmd {
+var buf tagLmcCmd
+for slot := 0; slot < 256; slot++ {
+buf.words[slot*6] = 0x8002
+}
+if speedWord == 0 {
+speedWord = 0x082a
+}
+dist := uint16(math.Hypot(float64(toX)-float64(fromX), float64(toY)-float64(fromY)))
+buf.words[0*6+0] = 0x8051
+buf.words[1*6+0] = 0x8006
+buf.words[1*6+1] = speedWord
+buf.words[2*6+0] = 0x800d
+buf.words[2*6+1] = 25 // 0x0019 (原廠收尾固定用 p1=25)
+buf.words[3*6+0] = 0x8001
+buf.words[3*6+1] = toX
+buf.words[3*6+2] = toY
+buf.words[3*6+3] = 0
+buf.words[3*6+4] = dist
+buf.words[3*6+5] = 0
 return buf
 }
 
@@ -297,17 +347,19 @@ return fmt.Errorf("無法開啟控制卡")
 defer d.procClose.Call()
 
 var res tagResult
-d.procGetPosXY.Call(uintptr(unsafe.Pointer(&res)), 0)
+cardID := uintptr(0)
+d.procGetPosXY.Call(uintptr(unsafe.Pointer(&res)), cardID)
 curX, curY := res.v1, res.v2
 if curX == 0 && curY == 0 {
 curX, curY = 32768, 32768
 }
 
-d.procResetList.Call(uintptr(unsafe.Pointer(&res)), 0)
-d.procGotoXY.Call(uintptr(unsafe.Pointer(&res)), 0, uintptr(curX), uintptr(curY))
-buf := makeFpgaCmdBuf(curX, curY, [][2]uint16{{x, y}}, 0x082a)
-d.procWriteCmdBuf.Call(uintptr(unsafe.Pointer(&res)), 0, uintptr(unsafe.Pointer(&buf)))
-d.procExecuteList.Call(uintptr(unsafe.Pointer(&res)), 0)
+d.procStopExecute.Call(uintptr(unsafe.Pointer(&res)), cardID)
+d.procResetList.Call(uintptr(unsafe.Pointer(&res)), cardID)
+d.procGotoXY.Call(uintptr(unsafe.Pointer(&res)), cardID, uintptr(curX), uintptr(curY))
+buf := buildMoveSingleBuf(curX, curY, x, y, 0x082a)
+d.procWriteCmdBuf.Call(uintptr(unsafe.Pointer(&res)), cardID, uintptr(unsafe.Pointer(&buf)))
+d.procExecuteList.Call(uintptr(unsafe.Pointer(&res)), cardID)
 time.Sleep(35 * time.Millisecond)
 
 d.lastX.Store(uint32(x))
@@ -324,7 +376,11 @@ d.stopFlag.Store(true)
 return nil
 }
 
-// StartContinuousPreview 修正提前 ResetList 的問題：每批次執行 4 圈正方形並精確等待物理掃描時間，同時點亮 Out4 (0x0010) 與 Out8 (0x0100)
+// StartContinuousPreview 100% 複製 Frida 攔截到的原廠 F1 紅光預覽流程：
+// 1. WritePort(0x110, 0) -> ResetList() -> GotoXY(0x8001, 0x8001)
+// 2. WriteCmdBuf(firstBuf) -> WriteCmdBuf(contBuf) -> ExecuteList()
+// 3. 迴圈中當 GetListStatus 可寫入時持續補充 WriteCmdBuf(contBuf)，中間絕不呼叫 ResetList！
+// 4. 停止時：StopExecute() -> WritePort(0x110, 0) -> ResetList() -> GotoXY(curX, curY) -> WriteCmdBuf(回 0x8000, 0x8000) -> ExecuteList() -> SetControlMode(1) -> SetStandby(2000, 20, 1) -> WritePort(0x10, 0)
 func (d *WindowsJczDriver) StartContinuousPreview(sizeMM float64, speedParam int, timeoutSec int) error {
 if d.previewing.Load() {
 if timeoutSec <= 0 || timeoutSec > 120 {
@@ -345,7 +401,7 @@ timeoutSec = 30
 }
 jumpSpeedWord := uint16(speedParam)
 if jumpSpeedWord < 200 || jumpSpeedWord > 10000 {
-jumpSpeedWord = 0x082a
+jumpSpeedWord = 0x082a // 原廠預設 2090 (0x082a)
 }
 
 halfSpan := uint16((sizeMM / 2.0) * (65535.0 / 110.0))
@@ -376,62 +432,66 @@ defer d.procClose.Call()
 var res tagResult
 cardID := uintptr(0)
 c := uint16(32768)
-// 標準正方形四個頂點：左下 -> 右下 -> 右上 -> 左上
-c0 := [2]uint16{c - halfSpan, c - halfSpan}
-c1 := [2]uint16{c + halfSpan, c - halfSpan}
-c2 := [2]uint16{c + halfSpan, c + halfSpan}
-c3 := [2]uint16{c - halfSpan, c + halfSpan}
 
-// 每批組裝 6 圈正方形 (24 個頂點)
-loopsPerBatch := 6
-var batchPts [][2]uint16
-for l := 0; l < loopsPerBatch; l++ {
-batchPts = append(batchPts, c1, c2, c3, c0)
-}
-cmdBuf := makeFpgaCmdBuf(c0[0], c0[1], batchPts, jumpSpeedWord)
-
-// 計算這 6 圈在 FPGA 上的真實物理執行時間 (毫秒)：總周長 = sizeMM * 4 * 6，速度約 2800 mm/s
-totalDistMM := sizeMM * 4.0 * float64(loopsPerBatch)
-batchDurationMs := int((totalDistMM / 2600.0) * 1000.0) + 18
-if batchDurationMs < 60 {
-batchDurationMs = 60
+// 完全比照原廠頂點順序：左上 -> 右上 -> 右下 -> 左下
+corners := [4][2]uint16{
+{c - halfSpan, c + halfSpan},
+{c + halfSpan, c + halfSpan},
+{c + halfSpan, c - halfSpan},
+{c - halfSpan, c - halfSpan},
 }
 
-// 1. 同時開啟 Out4 (Bit 4 = 0x0010, 您實測確認可畫出正方形的標刻/紅光輸出) 與 Out8 (0x0100 RedPt)
-previewPort := uint16(0x0110)
-d.procWritePort.Call(uintptr(unsafe.Pointer(&res)), cardID, uintptr(previewPort), 0)
-d.procCmd.Call(uintptr(unsafe.Pointer(&res)), cardID, 0x0021, uintptr(previewPort), uintptr(0xFFFF), 0, 0, 0)
+// 預先建立第 1 個 Buffer 與後續無縫接續的 4 種相位 Buffer
+firstBuf, nextIdx, lastX, lastY := buildFirstPreviewBuf(0x8001, 0x8001, corners, jumpSpeedWord)
+contBuf, _, _, _ := buildContPreviewBuf(lastX, lastY, corners, nextIdx)
 
-// 2. 先定位至左下角起點 c0
-d.procGotoXY.Call(uintptr(unsafe.Pointer(&res)), cardID, uintptr(c0[0]), uintptr(c0[1]))
-time.Sleep(15 * time.Millisecond)
-
-// 3. 持續循環執行 6 圈 FPGA 清單，並精確等待物理時間跑完，絕不中途 ResetList！
-for !d.stopFlag.Load() && time.Now().Unix() < d.previewEndUnix.Load() {
+// === 原廠啟動序列 ===
+// [MIO_WritePort] arg1=0x110 arg2=0x0
+d.procWritePort.Call(uintptr(unsafe.Pointer(&res)), cardID, 0x0110, 0)
+// [MIO_ResetList] (全場唯一一次 ResetList！)
 d.procResetList.Call(uintptr(unsafe.Pointer(&res)), cardID)
-d.procWriteCmdBuf.Call(uintptr(unsafe.Pointer(&res)), cardID, uintptr(unsafe.Pointer(&cmdBuf)))
+// [MIO_GotoXY] X=32769(0x8001) Y=32769(0x8001)
+d.procGotoXY.Call(uintptr(unsafe.Pointer(&res)), cardID, 0x8001, 0x8001)
+
+// 寫入第 1 塊與第 2 塊 Buffer 填滿雙緩衝區，然後啟動 ExecuteList！
+d.procWriteCmdBuf.Call(uintptr(unsafe.Pointer(&res)), cardID, uintptr(unsafe.Pointer(&firstBuf)))
+d.procWriteCmdBuf.Call(uintptr(unsafe.Pointer(&res)), cardID, uintptr(unsafe.Pointer(&contBuf)))
 d.procExecuteList.Call(uintptr(unsafe.Pointer(&res)), cardID)
 
-// 分段睡眠等待這 6 圈完整跑完，期間若按停止可隨時跳出
-slept := 0
-for slept < batchDurationMs && !d.stopFlag.Load() {
-time.Sleep(10 * time.Millisecond)
-slept += 10
+// === 原廠無縫串流迴圈 (中間絕不呼叫 ResetList，也不呼叫 ExecuteList) ===
+for !d.stopFlag.Load() && time.Now().Unix() < d.previewEndUnix.Load() {
+d.procGetListStat.Call(uintptr(unsafe.Pointer(&res)), cardID)
+// 當雙緩衝區空出一個槽位 (res.v0 != 0) 時，立即補入下一塊 64 圈 Buffer
+if res.v0 != 0 {
+d.procWriteCmdBuf.Call(uintptr(unsafe.Pointer(&res)), cardID, uintptr(unsafe.Pointer(&contBuf)))
+} else {
+time.Sleep(5 * time.Millisecond)
 }
-d.lastX.Store(uint32(c0[0]))
-d.lastY.Store(uint32(c0[1]))
 }
 
-// 4. 結束預覽：停止清單、滑回中心點 (0x8000, 0x8000) 並關閉 Out4 恢復原狀態
+// === 原廠停止序列 (與 Frida 攔截紀錄 100% 相同) ===
 d.procStopExecute.Call(uintptr(unsafe.Pointer(&res)), cardID)
+d.procWritePort.Call(uintptr(unsafe.Pointer(&res)), cardID, 0x0110, 0)
 d.procResetList.Call(uintptr(unsafe.Pointer(&res)), cardID)
-homeBuf := makeFpgaCmdBuf(c0[0], c0[1], [][2]uint16{{0x8000, 0x8000}}, 0x082a)
+
+d.procGetPosXY.Call(uintptr(unsafe.Pointer(&res)), cardID)
+curX, curY := res.v1, res.v2
+if curX == 0 && curY == 0 {
+curX, curY = corners[0][0], corners[0][1]
+}
+d.procGotoXY.Call(uintptr(unsafe.Pointer(&res)), cardID, uintptr(curX), uintptr(curY))
+
+homeBuf := buildMoveSingleBuf(curX, curY, 0x8000, 0x8000, 0x082a)
 d.procWriteCmdBuf.Call(uintptr(unsafe.Pointer(&res)), cardID, uintptr(unsafe.Pointer(&homeBuf)))
 d.procExecuteList.Call(uintptr(unsafe.Pointer(&res)), cardID)
-time.Sleep(40 * time.Millisecond)
+time.Sleep(30 * time.Millisecond)
 
+d.procSetCtrlMode.Call(uintptr(unsafe.Pointer(&res)), cardID, 1)
+d.procWritePort.Call(uintptr(unsafe.Pointer(&res)), cardID, 0x0110, 0)
+d.procSetStandby.Call(uintptr(unsafe.Pointer(&res)), cardID, 2000, 20, 1)
+// 恢復待機狀態 arg1=0x10 arg2=0x0
 d.procWritePort.Call(uintptr(unsafe.Pointer(&res)), cardID, uintptr(d.outPort), 0)
-d.procCmd.Call(uintptr(unsafe.Pointer(&res)), cardID, 0x0021, uintptr(d.outPort), uintptr(0xFFFF), 0, 0, 0)
+
 d.lastX.Store(32768)
 d.lastY.Store(32768)
 }()
