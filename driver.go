@@ -19,8 +19,8 @@ OutputPortBin string `json:"output_port_bin"`
 FieldSizeMM   string `json:"field_size_mm"`
 TotalParts    string `json:"total_parts"`
 TotalTimeSec  string `json:"total_time_sec"`
-HeadUnlocked  bool   `json:"head_unlocked"` // In0 & In2 解鎖雷射頭與風扇狀態
-ButtonPressed bool   `json:"button_pressed"` // In15 外部按鈕狀態
+HeadUnlocked  bool   `json:"head_unlocked"`
+ButtonPressed bool   `json:"button_pressed"`
 ErrorMsg      string `json:"error_msg,omitempty"`
 }
 
@@ -28,5 +28,5 @@ type LaserController interface {
 GetStatus() BoardStatus
 WriteOutputPort(mask uint16, val uint16) error
 GotoXY(x uint16, y uint16) error
-RedLightPreview(size uint16) error
+RedLightPreview(sizeMM float64) error
 }

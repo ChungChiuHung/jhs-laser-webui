@@ -38,7 +38,7 @@ Val  uint16
 }
 
 type redReq struct {
-Span uint16
+SizeMM float64
 }
 
 func main() {
@@ -113,7 +113,7 @@ return
 }
 var req redReq
 _ = json.NewDecoder(r.Body).Decode(&req)
-err := controller.RedLightPreview(req.Span)
+err := controller.RedLightPreview(req.SizeMM)
 w.Header().Set("Content-Type", "application/json")
 if err != nil {
 json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": err.Error()})

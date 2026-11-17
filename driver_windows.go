@@ -149,11 +149,9 @@ status.InputPortBin = fmt.Sprintf("%016b", ioVal)
 status.OutputPortHex = fmt.Sprintf("0x%04X", d.outPort)
 status.OutputPortBin = fmt.Sprintf("%016b", d.outPort)
 
-// In0 與 In2 對應解鎖雷射頭與風扇開關監控
 in0 := (ioVal & (1 << 0)) != 0
 in2 := (ioVal & (1 << 2)) != 0
 status.HeadUnlocked = (in0 && in2)
-// In15 對應按鈕開關 (常開接地時按下變 0，未按為 1)
 status.ButtonPressed = (ioVal & (1 << 15)) == 0
 
 return status
@@ -184,6 +182,21 @@ d.procCmd.Call(uintptr(unsafe.Pointer(&res)), 0, 0x0021, uintptr(d.outPort), uin
 return nil
 }
 
+// smoothMove 採用線性微步插補將振鏡平滑移動至目標點，避免大跨距瞬間跳躍造成振鏡馬達異音
+func (d *WindowsJczDriver) smoothMove(fromX, fromY, toX, toY uint16, steps int, delay time.Duration) {
+var res tagResult
+dx := (float64(toX) - float64(fromX)) / float64(steps)
+dy := (float64(toY) - float64(fromY)) / float64(steps)
+for s := 1; s <= steps; s++ {
+nx := uint16(float64(fromX) + dx*float64(s))
+ny := uint16(float64(fromY) + dy*float64(s))
+d.procCmd.Call(uintptr(unsafe.Pointer(&res)), 0, 0x000d, uintptr(nx), uintptr(ny), 0, 0, 0)
+if delay > 0 {
+time.Sleep(delay)
+}
+}
+}
+
 func (d *WindowsJczDriver) GotoXY(x uint16, y uint16) error {
 d.mu.Lock()
 defer d.mu.Unlock()
@@ -202,12 +215,14 @@ return fmt.Errorf("無法開啟控制卡")
 defer d.procClose.Call()
 
 var res tagResult
-d.procCmd.Call(uintptr(unsafe.Pointer(&res)), 0, 0x000d, uintptr(x), uintptr(y), 0, 0, 0)
+d.procCmd.Call(uintptr(unsafe.Pointer(&res)), 0, 0x000c, 0, 0, 0, 0, 0)
+curX, curY := res.v1, res.v2
+d.smoothMove(curX, curY, x, y, 25, time.Millisecond)
 return nil
 }
 
-// RedLightPreview 開啟紅光位元並驅動振鏡繞行正方形外框 3 圈以供肉眼確認紅光與振鏡連動
-func (d *WindowsJczDriver) RedLightPreview(halfSpan uint16) error {
+// RedLightPreview 同步開啟 Out4 (標刻紅光輸出) 與 Out8，並以微步插補靜音描繪正方形外框
+func (d *WindowsJczDriver) RedLightPreview(sizeMM float64) error {
 d.mu.Lock()
 defer d.mu.Unlock()
 
@@ -224,18 +239,23 @@ return fmt.Errorf("無法開啟控制卡")
 }
 defer d.procClose.Call()
 
-var res tagResult
-// 1. 開啟 Out8 (RedPt) 紅光位元
-redPort := d.outPort | (1 << 8)
-d.procWritePort.Call(uintptr(unsafe.Pointer(&res)), 0, uintptr(redPort), uintptr(0xFFFF))
-d.procCmd.Call(uintptr(unsafe.Pointer(&res)), 0, 0x0021, uintptr(redPort), uintptr(0xFFFF), 0, 0, 0)
-
-// 2. 計算中心點 (32768, 32768) 四角座標並動態掃描 3 圈
-if halfSpan == 0 || halfSpan > 30000 {
-halfSpan = 12000 // 約 40x40 mm 範圍
+// 限制預覽尺寸在 2mm ~ 90mm 安全範圍內 (全幅面 110mm = 65535 DAC, 1mm ≈ 595.77 DAC)
+if sizeMM < 2 {
+sizeMM = 20
 }
+if sizeMM > 90 {
+sizeMM = 90
+}
+halfSpan := uint16((sizeMM / 2.0) * (65535.0 / 110.0))
+
+var res tagResult
+// 1. 同時開啟 Out4 (MarkOut 紅光連動向) 與 Out8 (RedPt)
+previewPort := d.outPort | (1 << 4) | (1 << 8)
+d.procWritePort.Call(uintptr(unsafe.Pointer(&res)), 0, uintptr(previewPort), uintptr(0xFFFF))
+d.procCmd.Call(uintptr(unsafe.Pointer(&res)), 0, 0x0021, uintptr(previewPort), uintptr(0xFFFF), 0, 0, 0)
+
 c := uint16(32768)
-pts := [][2]uint16{
+corners := [][2]uint16{
 {c - halfSpan, c - halfSpan},
 {c + halfSpan, c - halfSpan},
 {c + halfSpan, c + halfSpan},
@@ -243,15 +263,28 @@ pts := [][2]uint16{
 {c - halfSpan, c - halfSpan},
 }
 
+// 先從中心點平滑移動至起點角
+d.smoothMove(c, c, corners[0][0], corners[0][1], 20, time.Millisecond)
+
+// 根據邊長動態決定插補步數 (每步約 0.6mm，確保高速且安靜無聲)
+stepsPerEdge := int(sizeMM / 0.6)
+if stepsPerEdge < 15 {
+stepsPerEdge = 15
+}
+if stepsPerEdge > 80 {
+stepsPerEdge = 80
+}
+
+// 2. 靜音平滑掃描 3 圈正方形
 for loop := 0; loop < 3; loop++ {
-for _, pt := range pts {
-d.procCmd.Call(uintptr(unsafe.Pointer(&res)), 0, 0x000d, uintptr(pt[0]), uintptr(pt[1]), 0, 0, 0)
-time.Sleep(35 * time.Millisecond)
+for i := 0; i < 4; i++ {
+d.smoothMove(corners[i][0], corners[i][1], corners[i+1][0], corners[i+1][1], stepsPerEdge, time.Millisecond)
 }
 }
 
-// 3. 回到中心點並還原原本的 OutPort 狀態
-d.procCmd.Call(uintptr(unsafe.Pointer(&res)), 0, 0x000d, uintptr(c), uintptr(c), 0, 0, 0)
+// 3. 平滑回到中心點 (32768, 32768) 並還原原本的 OutPort 狀態
+d.smoothMove(corners[4][0], corners[4][1], c, c, 20, time.Millisecond)
 d.procWritePort.Call(uintptr(unsafe.Pointer(&res)), 0, uintptr(d.outPort), uintptr(0xFFFF))
+d.procCmd.Call(uintptr(unsafe.Pointer(&res)), 0, 0x0021, uintptr(d.outPort), uintptr(0xFFFF), 0, 0, 0)
 return nil
 }

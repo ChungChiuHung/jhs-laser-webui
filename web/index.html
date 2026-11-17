@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>JHS 雷射打標設備 Web 監控中心 (實測硬體映射版)</title>
+  <title>JHS 雷射打標設備 Web 監控中心 (靜音平滑預覽版)</title>
   <style>
     :root { --bg: #0f172a; --card: #1e293b; --text: #f8fafc; --muted: #94a3b8; --ok: #22c55e; --warn: #f59e0b; --err: #ef4444; --accent: #38bdf8; }
     body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; }
@@ -34,14 +34,14 @@
     button { background: var(--accent); color: #0f172a; border: none; padding: 8px 14px; border-radius: 6px; font-weight: 600; cursor: pointer; }
     button:hover { opacity: 0.9; }
     .btn-sm { padding: 5px 12px; font-size: 12px; border-radius: 4px; }
-    input[type="number"] { background: #0f172a; border: 1px solid #334155; color: var(--text); padding: 6px 10px; border-radius: 6px; width: 80px; }
+    input[type="number"] { background: #0f172a; border: 1px solid #334155; color: var(--text); padding: 6px 8px; border-radius: 6px; width: 72px; }
   </style>
 </head>
 <body>
   <div class="container">
     <header>
       <div>
-        <h1 style="margin:0; font-size:22px;">JHS 雷射打標設備監控面板 <span style="font-size:13px; color:var(--ok);">[實機 I/O 驗證版]</span></h1>
+        <h1 style="margin:0; font-size:22px;">JHS 雷射打標設備監控面板 <span style="font-size:13px; color:var(--ok);">[靜音微步插補版]</span></h1>
         <small id="platform" style="color:var(--muted);">載入中...</small>
       </div>
       <div style="display:flex; gap:12px; align-items:center;">
@@ -52,7 +52,6 @@
 
     <div id="errBox" style="display:none; background:rgba(239,68,68,0.2); border:1px solid var(--err); padding:12px; border-radius:8px; margin-bottom:16px; color:#fca5a5;"></div>
 
-    <!-- 頂部實機關鍵開關即時狀態列 -->
     <div class="status-strip">
       <div class="status-box">
         <div>
@@ -70,7 +69,7 @@
       </div>
       <div class="status-box">
         <div>
-          <div style="font-size:12px; color:var(--muted);">標刻輸出控制 (Out4 繼電器)</div>
+          <div style="font-size:12px; color:var(--muted);">標刻/紅光輸出 (Out4)</div>
           <div style="font-size:15px; font-weight:700; margin-top:4px;" id="markOutText">OFF (0)</div>
         </div>
         <button class="btn-sm" onclick="toggleOut4Quick()" style="background:var(--warn);">切換 Out4 開關</button>
@@ -88,18 +87,20 @@
       </div>
 
       <div class="card">
-        <h3><span>振鏡控制與紅光動態外框預覽</span></h3>
+        <h3><span>振鏡平滑控制與正方形預覽 (最大範圍 110mm)</span></h3>
         <div class="kv"><span>標刻緩衝區 (0x000A)</span><span id="listState">-</span></div>
         <div class="kv"><span>振鏡 X / Y 座標</span><span id="galvoXY">-</span></div>
-        <div style="margin-top:12px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+        <div style="margin-top:10px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
           X: <input type="number" id="inputX" value="32768" min="0" max="65535">
           Y: <input type="number" id="inputY" value="32768" min="0" max="65535">
-          <button onclick="moveGalvo()">移動振鏡</button>
+          <button onclick="moveGalvo()">平滑移動</button>
           <button onclick="resetCenter()" style="background:#475569; color:#fff;">歸零中心</button>
         </div>
-        <div style="margin-top:12px; padding-top:10px; border-top:1px dashed #334155; display:flex; justify-content:space-between; align-items:center;">
-          <small style="color:var(--muted);">振鏡高速掃描正方形外框 3 圈 + 觸發紅光：</small>
-          <button class="btn-sm" onclick="runRedLightFrame()" style="background:#ef4444; color:#fff;">執行紅光外框預覽</button>
+        <div style="margin-top:12px; padding-top:10px; border-top:1px dashed #334155; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+          <div style="font-size:13px;">
+            預覽正方形邊長 (mm): <input type="number" id="previewSizeMM" value="20" min="2" max="90" style="width:55px;"> mm
+          </div>
+          <button class="btn-sm" onclick="runRedLightFrame()" style="background:#ef4444; color:#fff;">靜音繪製正方形預覽 (連動Out4)</button>
         </div>
       </div>
     </div>
@@ -108,12 +109,11 @@
       <h3>
         <span>16 路輸出 IO 互動控制 (MIO_WritePort: <span id="outHex">0x0000</span>)</span>
         <div style="display:flex; gap:8px;">
-          <button class="btn-sm" onclick="toggleOutputPin(4, true)" style="background:var(--ok); color:#0f172a;">開啟 Out4 (標刻輸出)</button>
+          <button class="btn-sm" onclick="toggleOutputPin(4, true)" style="background:var(--ok); color:#0f172a;">開啟 Out4 (標刻/紅光輸出)</button>
           <button class="btn-sm" onclick="toggleOutputPin(4, false)" style="background:#475569; color:#fff;">關閉 Out4</button>
           <button class="btn-sm" onclick="setAllOutputs(0xFFFF, 0x0000)" style="background:#334155; color:#fff;">全部歸零</button>
         </div>
       </h3>
-      <small style="color:var(--muted); display:block; margin-bottom:6px;">實測確認：<b>Out4 = 標刻輸出開關 (已驗證可用)</b>；Out8 為紅光指示位元 (待確認是否由外部硬體開關控制)。</small>
       <div class="io-grid" id="outGrid"></div>
     </div>
 
@@ -130,8 +130,8 @@
     let lastOut4State = false;
 
     const outHwMap = {
-      4: { text: '★標刻輸出 (已驗證)', verified: true },
-      8: { text: '? 紅光指示 (待確認)', verified: false },
+      4: { text: '★標刻/紅光輸出', verified: true },
+      8: { text: 'RedPt (輔助)', verified: false },
       0: { text: 'CON5-Pin5', verified: false },
       1: { text: 'CON5-Pin17', verified: false },
       2: { text: 'CON5-Pin4', verified: false },
@@ -145,7 +145,7 @@
       15: { text: '★按鈕開關 (已驗證)', verified: true },
       2:  { text: '★解鎖雷射頭/風扇', verified: true },
       0:  { text: '★解鎖雷射頭/風扇', verified: true },
-      14: { text: '? 擴展軸原點 (待確認)', verified: false },
+      14: { text: '未接線 (內部上拉)', verified: false },
       8:  { text: '飛行觸發 (未啟用)', verified: false },
       4:  { text: 'CON5-Pin24', verified: false },
       3:  { text: 'CON2-Pin15', verified: false },
@@ -188,7 +188,6 @@
         const in2 = bin[15 - 2];
         const in15 = bin[15 - 15];
 
-        // 更新頂部狀態卡 1: 解鎖雷射頭與風扇 (In0, In2)
         const headFanText = document.getElementById('headFanText');
         const headFanBadge = document.getElementById('headFanBadge');
         headFanText.textContent = 'In0=' + in0 + ' , In2=' + in2;
@@ -196,11 +195,10 @@
           headFanBadge.textContent = '已解鎖 / 風扇啟動 (1)';
           headFanBadge.className = 'badge ok';
         } else {
-          headFanBadge.textContent = '狀態切換 (' + in0 + '/' + in2 + ')';
+          headFanBadge.textContent = '未解鎖 / 風扇關閉 (' + in0 + '/' + in2 + ')';
           headFanBadge.className = 'badge warn';
         }
 
-        // 更新頂部狀態卡 2: In15 按鈕開關
         const btnText = document.getElementById('btnSwitchText');
         const btnBadge = document.getElementById('btnSwitchBadge');
         btnText.textContent = 'In15 電位 = ' + in15;
@@ -212,7 +210,6 @@
           btnBadge.className = 'badge ok';
         }
 
-        // 更新頂部狀態卡 3: Out4 標刻輸出
         const currentOutBin = data.output_port_bin || '0000000000000000';
         lastOut4State = (currentOutBin[15 - 4] === '1');
         document.getElementById('markOutText').textContent = lastOut4State ? 'ON (1) 已導通' : 'OFF (0) 關閉';
@@ -292,10 +289,11 @@
     }
 
     async function runRedLightFrame() {
+      const sizeMM = parseFloat(document.getElementById('previewSizeMM').value) || 20;
       await fetch('/api/redlight', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({span: 12000})
+        body: JSON.stringify({SizeMM: sizeMM})
       });
       fetchStatus();
     }
