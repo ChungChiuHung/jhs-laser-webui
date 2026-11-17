@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>JHS 雷射打標設備 Web 監控中心 (jhs-laser-webui)</title>
   <style>
-    :root { --bg: #0f172a; --card: #1e293b; --text: #f8fafc; --muted: #94a3b8; --ok: #22c55e; --err: #ef4444; --accent: #38bdf8; }
+    :root { --bg: #0f172a; --card: #1e293b; --text: #f8fafc; --muted: #94a3b8; --ok: #22c55e; --warn: #f59e0b; --err: #ef4444; --accent: #38bdf8; }
     body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 24px; }
     .container { max-width: 1080px; margin: 0 auto; }
     header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #334155; padding-bottom: 16px; margin-bottom: 24px; }
@@ -14,15 +14,19 @@
     .badge.err { background: rgba(239,68,68,0.2); color: var(--err); }
     .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
     .card { background: var(--card); border-radius: 12px; padding: 20px; border: 1px solid #334155; }
-    .card h3 { margin-top: 0; color: var(--accent); font-size: 16px; border-bottom: 1px solid #334155; padding-bottom: 10px; }
+    .card h3 { margin-top: 0; color: var(--accent); font-size: 16px; border-bottom: 1px solid #334155; padding-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
     .kv { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px dashed #334155; font-size: 14px; }
     .kv span:first-child { color: var(--muted); }
     .kv span:last-child { font-family: monospace; font-weight: 600; }
     .io-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 8px; margin-top: 12px; }
-    .io-pin { background: #0f172a; border: 1px solid #334155; border-radius: 6px; padding: 8px 4px; text-align: center; font-size: 12px; font-family: monospace; }
-    .io-pin.high { border-color: var(--ok); color: var(--ok); background: rgba(34,197,94,0.1); }
+    .io-pin { background: #0f172a; border: 1px solid #334155; border-radius: 6px; padding: 8px 4px; text-align: center; font-size: 12px; font-family: monospace; transition: all 0.15s; }
+    .io-pin.high { border-color: var(--ok); color: var(--ok); background: rgba(34,197,94,0.12); }
+    .out-btn { cursor: pointer; user-select: none; }
+    .out-btn:hover { border-color: var(--accent); transform: translateY(-1px); }
+    .out-btn.active { border-color: var(--warn); color: var(--warn); background: rgba(245,158,11,0.18); box-shadow: 0 0 8px rgba(245,158,11,0.25); }
     button { background: var(--accent); color: #0f172a; border: none; padding: 8px 16px; border-radius: 6px; font-weight: 600; cursor: pointer; }
     button:hover { opacity: 0.9; }
+    .btn-sm { padding: 4px 10px; font-size: 12px; border-radius: 4px; }
     input[type="number"] { background: #0f172a; border: 1px solid #334155; color: var(--text); padding: 6px 10px; border-radius: 6px; width: 90px; }
   </style>
 </head>
@@ -43,7 +47,7 @@
 
     <div class="grid">
       <div class="card">
-        <h3>硬體與授權狀態</h3>
+        <h3><span>硬體與授權狀態</span></h3>
         <div class="kv"><span>裝置 Handle</span><span id="handle">-</span></div>
         <div class="kv"><span>底層狀態碼 (GetState)</span><span id="stateHex">-</span></div>
         <div class="kv"><span>韌體/硬體版本</span><span id="fwVer">-</span></div>
@@ -52,7 +56,7 @@
       </div>
 
       <div class="card">
-        <h3>振鏡與加工緩衝區控制</h3>
+        <h3><span>振鏡與加工緩衝區控制</span></h3>
         <div class="kv"><span>標刻緩衝區 (0x000A)</span><span id="listState">-</span></div>
         <div class="kv"><span>振鏡 X 座標</span><span id="galvoX">-</span></div>
         <div class="kv"><span>振鏡 Y 座標</span><span id="galvoY">-</span></div>
@@ -66,75 +70,129 @@
     </div>
 
     <div class="card" style="margin-top:16px;">
-      <h3>16 路通用輸入 IO 即時狀態 (MIO_ReadPort: <span id="ioHex">-</span>)</h3>
+      <h3><span>16 路通用輸入 IO 即時狀態 (MIO_ReadPort: <span id="ioHex">-</span>)</span><small style="color:var(--muted); font-weight:normal;">CON5 / CON4 / CON2</small></h3>
       <div class="io-grid" id="ioGrid"></div>
+    </div>
+
+    <div class="card" style="margin-top:16px;">
+      <h3>
+        <span>16 路通用輸出 IO 互動控制 (MIO_WritePort: <span id="outHex">0x0000</span>)</span>
+        <div style="display:flex; gap:8px;">
+          <button class="btn-sm" onclick="setAllOutputs(0x00FF, 0x00FF)" style="background:var(--warn);">CON5 全開 (Out0~7)</button>
+          <button class="btn-sm" onclick="setAllOutputs(0xFFFF, 0x0000)" style="background:#475569; color:#fff;">全部關閉 (Reset 0)</button>
+        </div>
+      </h3>
+      <small style="color:var(--muted); display:block; margin-bottom:8px;">點擊下方任一腳位即可切換 HIGH (1) / LOW (0) 輸出狀態。Out0~Out7 位於 CON5 (DB25)；Out8 為紅光指示 (RedPt)。</small>
+      <div class="io-grid" id="outGrid"></div>
     </div>
   </div>
 
   <script>
+    let currentOutBin = "0000000000000000";
+
     async function fetchStatus() {
       try {
-        const res = await fetch('/api/status');
+        const res = await fetch("/api/status");
         const data = await res.json();
-        document.getElementById('platform').textContent = '運行環境: ' + data.platform;
-        const badge = document.getElementById('connBadge');
-        const errBox = document.getElementById('errBox');
+        document.getElementById("platform").textContent = "運行環境: " + data.platform;
+        const badge = document.getElementById("connBadge");
+        const errBox = document.getElementById("errBox");
 
         if (data.error_msg) {
-          badge.textContent = '連線異常';
-          badge.className = 'badge err';
-          errBox.style.display = 'block';
+          badge.textContent = "連線異常";
+          badge.className = "badge err";
+          errBox.style.display = "block";
           errBox.textContent = data.error_msg;
           return;
         }
-        errBox.style.display = 'none';
-        badge.textContent = data.connected ? '設備已就緒 (OK)' : '未連線';
-        badge.className = data.connected ? 'badge ok' : 'badge err';
+        errBox.style.display = "none";
+        badge.textContent = data.connected ? "設備已就緒 (OK)" : "未連線";
+        badge.className = data.connected ? "badge ok" : "badge err";
 
-        document.getElementById('handle').textContent = data.handle_hex;
-        document.getElementById('stateHex').textContent = data.state_hex;
-        document.getElementById('fwVer').textContent = data.firmware_ver;
-        document.getElementById('serialNo').textContent = data.serial_no;
-        document.getElementById('chipId').textContent = data.chip_id_state;
-        document.getElementById('listState').textContent = data.list_ready ? '就緒 (' + data.list_state_hex + ')' : '忙碌 (' + data.list_state_hex + ')';
-        document.getElementById('galvoX').textContent = data.galvo_x + ' (0x' + data.galvo_x.toString(16).toUpperCase() + ')';
-        document.getElementById('galvoY').textContent = data.galvo_y + ' (0x' + data.galvo_y.toString(16).toUpperCase() + ')';
-        document.getElementById('ioHex').textContent = data.input_port_hex;
+        document.getElementById("handle").textContent = data.handle_hex;
+        document.getElementById("stateHex").textContent = data.state_hex;
+        document.getElementById("fwVer").textContent = data.firmware_ver;
+        document.getElementById("serialNo").textContent = data.serial_no;
+        document.getElementById("chipId").textContent = data.chip_id_state;
+        document.getElementById("listState").textContent = data.list_ready ? "就緒 (" + data.list_state_hex + ")" : "忙碌 (" + data.list_state_hex + ")";
+        document.getElementById("galvoX").textContent = data.galvo_x + " (0x" + data.galvo_x.toString(16).toUpperCase() + ")";
+        document.getElementById("galvoY").textContent = data.galvo_y + " (0x" + data.galvo_y.toString(16).toUpperCase() + ")";
+        document.getElementById("ioHex").textContent = data.input_port_hex;
+        document.getElementById("outHex").textContent = data.output_port_hex || "0x0000";
 
-        const grid = document.getElementById('ioGrid');
-        grid.innerHTML = '';
-        const bin = data.input_port_bin || '0000000000000000';
+        // 渲染輸入 IO
+        const grid = document.getElementById("ioGrid");
+        grid.innerHTML = "";
+        const bin = data.input_port_bin || "0000000000000000";
         for (let i = 15; i >= 0; i--) {
           const bit = bin[15 - i];
-          const div = document.createElement('div');
-          div.className = 'io-pin ' + (bit === '1' ? 'high' : '');
-          let label = 'In' + i;
-          if (i === 0) label += ' (Ready)';
-          if (i === 14) label += ' (XORG0)';
-          if (i === 15) label += ' (YORG0)';
-          div.innerHTML = '<div>' + label + '</div><div style="font-size:16px;font-weight:bold;margin-top:4px;">' + bit + '</div>';
+          const div = document.createElement("div");
+          div.className = "io-pin " + (bit === "1" ? "high" : "");
+          let label = "In" + i;
+          if (i === 0) label += " (Ready)";
+          if (i === 14) label += " (XORG0)";
+          if (i === 15) label += " (YORG0)";
+          div.innerHTML = "<div>" + label + "</div><div style=\"font-size:16px;font-weight:bold;margin-top:4px;\">" + bit + "</div>";
           grid.appendChild(div);
+        }
+
+        // 渲染輸出 IO 控制按鈕
+        const outGrid = document.getElementById("outGrid");
+        outGrid.innerHTML = "";
+        currentOutBin = data.output_port_bin || "0000000000000000";
+        const con5Pins = {0:"Pin5", 1:"Pin17", 2:"Pin4", 3:"Pin16", 4:"Pin1", 5:"Pin14", 6:"Pin2", 7:"Pin15"};
+        for (let i = 15; i >= 0; i--) {
+          const bit = currentOutBin[15 - i];
+          const isHigh = (bit === "1");
+          const div = document.createElement("div");
+          div.className = "io-pin out-btn " + (isHigh ? "active" : "");
+          div.onclick = () => toggleOutputPin(i, !isHigh);
+          let label = "Out" + i;
+          if (con5Pins[i]) label += " (" + con5Pins[i] + ")";
+          if (i === 8) label += " (RedPt)";
+          div.innerHTML = "<div>" + label + "</div><div style=\"font-size:15px;font-weight:bold;margin-top:4px;\">" + (isHigh ? "ON (1)" : "OFF (0)") + "</div>";
+          outGrid.appendChild(div);
         }
       } catch (e) {
         console.error(e);
       }
     }
 
+    async function toggleOutputPin(bitIndex, turnOn) {
+      const mask = (1 << bitIndex);
+      const val = turnOn ? mask : 0;
+      await fetch("/api/writeport", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({mask, val})
+      });
+      fetchStatus();
+    }
+
+    async function setAllOutputs(mask, val) {
+      await fetch("/api/writeport", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({mask, val})
+      });
+      fetchStatus();
+    }
+
     async function moveGalvo() {
-      const x = parseInt(document.getElementById('inputX').value, 10);
-      const y = parseInt(document.getElementById('inputY').value, 10);
-      await fetch('/api/gotoxy', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({x, y}) });
+      const x = parseInt(document.getElementById("inputX").value, 10);
+      const y = parseInt(document.getElementById("inputY").value, 10);
+      await fetch("/api/gotoxy", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({x, y}) });
       fetchStatus();
     }
 
     function resetCenter() {
-      document.getElementById('inputX').value = 32768;
-      document.getElementById('inputY').value = 32768;
+      document.getElementById("inputX").value = 32768;
+      document.getElementById("inputY").value = 32768;
       moveGalvo();
     }
 
     setInterval(() => {
-      if (document.getElementById('autoRefresh').checked) fetchStatus();
+      if (document.getElementById("autoRefresh").checked) fetchStatus();
     }, 1000);
     fetchStatus();
   </script>
