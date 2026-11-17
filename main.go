@@ -115,7 +115,7 @@ return
 }
 var req redReq
 _ = json.NewDecoder(r.Body).Decode(&req)
-err := controller.RedLightPreview(req.SizeMM, req.StepDelayMs)
+if req.Shape == "" { req.Shape = "square" }; err := controller.StartShapePreview(req.Shape, req.SizeMM, req.StepDelayMs, 3)
 w.Header().Set("Content-Type", "application/json")
 if err != nil {
 json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": err.Error()})
@@ -134,7 +134,7 @@ _ = json.NewDecoder(r.Body).Decode(&req)
 if req.TimeoutSec <= 0 {
 req.TimeoutSec = 30
 }
-err := controller.StartContinuousPreview(req.SizeMM, req.StepDelayMs, req.TimeoutSec)
+if req.Shape == "" { req.Shape = "square" }; err := controller.StartShapePreview(req.Shape, req.SizeMM, req.StepDelayMs, req.TimeoutSec)
 w.Header().Set("Content-Type", "application/json")
 if err != nil {
 json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": err.Error()})

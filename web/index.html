@@ -544,8 +544,16 @@
 
               <div class="form-row">
                 <div class="field-group">
-                  <span>預覽框</span>
-                  <input type="number" id="previewSizeMM" value="15" min="2" max="90" style="width:46px;" oninput="updateScope()">
+                  <span>形狀</span>
+                  <select id="previewShape" onchange="updateScope()">
+                    <option value="square" selected>外接方框</option>
+                    <option value="circle">圓形輪廓</option>
+                    <option value="cross">十字準星</option>
+                  </select>
+                </div>
+                <div class="field-group">
+                  <span>尺寸</span>
+                  <input type="number" id="previewSizeMM" value="15" min="2" max="90" style="width:44px;" oninput="updateScope()">
                   <span>mm</span>
                 </div>
                 <div class="field-group">
@@ -864,7 +872,7 @@
       await fetch('/api/redlight', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({SizeMM: sizeMM, StepDelayMs: stepDelayMs})
+        body: JSON.stringify({Shape: document.getElementById("previewShape").value, SizeMM: sizeMM, StepDelayMs: stepDelayMs})
       });
       fetchStatus();
     }
@@ -876,7 +884,7 @@
       await fetch('/api/preview/start', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({SizeMM: sizeMM, StepDelayMs: stepDelayMs, TimeoutSec: timeoutSec})
+        body: JSON.stringify({Shape: document.getElementById("previewShape").value, SizeMM: sizeMM, StepDelayMs: stepDelayMs, TimeoutSec: timeoutSec})
       });
       fetchStatus();
     }
@@ -888,6 +896,7 @@
 
     function syncPreviewSize() {
       document.getElementById('previewSizeMM').value = document.getElementById('markSizeMM').value;
+      document.getElementById('previewShape').value = document.getElementById('markShape').value;
       updateScope();
     }
 

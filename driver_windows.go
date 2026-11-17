@@ -353,7 +353,7 @@ d.procWritePort.Call(uintptr(unsafe.Pointer(&res)), 0, uintptr(d.outPort), 0)
 return nil
 }
 
-func buildFirstPreviewBuf(startX, startY uint16, corners [4][2]uint16, speedWord uint16) (tagLmcCmd, int, uint16, uint16) {
+func buildFirstPreviewBuf(startX, startY uint16, pts [][2]uint16, speedWord uint16) (tagLmcCmd, int, uint16, uint16) {
 var buf tagLmcCmd
 if speedWord == 0 {
 speedWord = 0x082a
@@ -370,10 +370,14 @@ buf.words[6*6+0] = 0x800d
 buf.words[6*6+1] = 0x0000
 
 curX, curY := startX, startY
-cIdx := 0
+n := len(pts)
+idx := 0
 for slot := 7; slot < 256; slot++ {
-pt := corners[cIdx]
+pt := pts[idx]
 dist := uint16(math.Hypot(float64(pt[0])-float64(curX), float64(pt[1])-float64(curY)))
+if dist == 0 {
+dist = 1
+}
 base := slot * 6
 buf.words[base+0] = 0x8001
 buf.words[base+1] = pt[0]
@@ -382,18 +386,22 @@ buf.words[base+3] = 0
 buf.words[base+4] = dist
 buf.words[base+5] = 0
 curX, curY = pt[0], pt[1]
-cIdx = (cIdx + 1) % 4
+idx = (idx + 1) % n
 }
-return buf, cIdx, curX, curY
+return buf, idx, curX, curY
 }
 
-func buildContPreviewBuf(startX, startY uint16, corners [4][2]uint16, startCornerIdx int) (tagLmcCmd, int, uint16, uint16) {
+func buildContPreviewBuf(startX, startY uint16, pts [][2]uint16, startIdx int) (tagLmcCmd, int, uint16, uint16) {
 var buf tagLmcCmd
 curX, curY := startX, startY
-cIdx := startCornerIdx
+n := len(pts)
+idx := startIdx % n
 for slot := 0; slot < 256; slot++ {
-pt := corners[cIdx]
+pt := pts[idx]
 dist := uint16(math.Hypot(float64(pt[0])-float64(curX), float64(pt[1])-float64(curY)))
+if dist == 0 {
+dist = 1
+}
 base := slot * 6
 buf.words[base+0] = 0x8001
 buf.words[base+1] = pt[0]
@@ -402,11 +410,10 @@ buf.words[base+3] = 0
 buf.words[base+4] = dist
 buf.words[base+5] = 0
 curX, curY = pt[0], pt[1]
-cIdx = (cIdx + 1) % 4
+idx = (idx + 1) % n
 }
-return buf, cIdx, curX, curY
+return buf, idx, curX, curY
 }
-
 func buildMoveSingleBuf(fromX, fromY, toX, toY uint16, speedWord uint16) tagLmcCmd {
 var buf tagLmcCmd
 for slot := 0; slot < 256; slot++ {
@@ -470,7 +477,7 @@ return nil
 }
 
 func (d *WindowsJczDriver) RedLightPreview(sizeMM float64, speedParam int) error {
-return d.StartContinuousPreview(sizeMM, speedParam, 3)
+return d.StartShapePreview("square", sizeMM, speedParam, 3)
 }
 
 func (d *WindowsJczDriver) StopPreview() error {
@@ -479,6 +486,10 @@ return nil
 }
 
 func (d *WindowsJczDriver) StartContinuousPreview(sizeMM float64, speedParam int, timeoutSec int) error {
+return d.StartShapePreview("square", sizeMM, speedParam, timeoutSec)
+}
+
+func (d *WindowsJczDriver) StartShapePreview(shape string, sizeMM float64, speedParam int, timeoutSec int) error {
 if d.previewing.Load() {
 if timeoutSec <= 0 || timeoutSec > 120 {
 timeoutSec = 30
@@ -529,21 +540,34 @@ var res tagResult
 cardID := uintptr(0)
 halfMM := sizeMM / 2.0
 
-// 套用 markcfg7 出廠光學校正與紅光偏移補償 (REDLIGHTOFFSETX/Y + REDLIGHTSCALE + GALVOASPECT0/1)
+var pts [][2]uint16
+switch shape {
+case "circle":
+// 64 段圓形外輪廓點位，經 markcfg7 光學校正比例換算
+segs := 64
+for i := 0; i < segs; i++ {
+ang := (float64(i) / float64(segs)) * 2.0 * math.Pi
+px, py := d.mmToGalvoDAC(halfMM*math.Cos(ang), halfMM*math.Sin(ang), true)
+pts = append(pts, [2]uint16{px, py})
+}
+case "cross":
+// 中心十字準星往返軌跡
+lx, ly := d.mmToGalvoDAC(-halfMM, 0, true)
+rx, ry := d.mmToGalvoDAC(halfMM, 0, true)
+cx, cy := d.mmToGalvoDAC(0, 0, true)
+tx, ty := d.mmToGalvoDAC(0, halfMM, true)
+bx, by := d.mmToGalvoDAC(0, -halfMM, true)
+pts = [][2]uint16{{lx, ly}, {rx, ry}, {cx, cy}, {tx, ty}, {bx, by}, {cx, cy}}
+default: // "square"
 x0, y0 := d.mmToGalvoDAC(-halfMM, halfMM, true)
 x1, y1 := d.mmToGalvoDAC(halfMM, halfMM, true)
 x2, y2 := d.mmToGalvoDAC(halfMM, -halfMM, true)
 x3, y3 := d.mmToGalvoDAC(-halfMM, -halfMM, true)
-
-corners := [4][2]uint16{
-{x0, y0},
-{x1, y1},
-{x2, y2},
-{x3, y3},
+pts = [][2]uint16{{x0, y0}, {x1, y1}, {x2, y2}, {x3, y3}}
 }
 
-firstBuf, nextIdx, lastX, lastY := buildFirstPreviewBuf(0x8001, 0x8001, corners, jumpSpeedWord)
-contBuf, _, _, _ := buildContPreviewBuf(lastX, lastY, corners, nextIdx)
+firstBuf, nextIdx, lastX, lastY := buildFirstPreviewBuf(0x8001, 0x8001, pts, jumpSpeedWord)
+contBuf, _, _, _ := buildContPreviewBuf(lastX, lastY, pts, nextIdx)
 
 d.procWritePort.Call(uintptr(unsafe.Pointer(&res)), cardID, 0x0110, 0)
 d.procResetList.Call(uintptr(unsafe.Pointer(&res)), cardID)
@@ -569,7 +593,7 @@ d.procResetList.Call(uintptr(unsafe.Pointer(&res)), cardID)
 d.procGetPosXY.Call(uintptr(unsafe.Pointer(&res)), cardID)
 curX, curY := res.v1, res.v2
 if curX == 0 && curY == 0 {
-curX, curY = corners[0][0], corners[0][1]
+curX, curY = pts[0][0], pts[0][1]
 }
 d.procGotoXY.Call(uintptr(unsafe.Pointer(&res)), cardID, uintptr(curX), uintptr(curY))
 
@@ -589,7 +613,6 @@ d.lastY.Store(32768)
 
 return nil
 }
-
 // ExecuteLaserMark 套用完整 markcfg7 出廠光學校正公式 (GALVOASPECT0=83.684, GALVOASPECT1=91.371, Distor, TrapeDistor, HorVer) 雕刻 100% 真圓
 func (d *WindowsJczDriver) ExecuteLaserMark(req MarkRequest) error {
 d.stopFlag.Store(true)

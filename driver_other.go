@@ -30,13 +30,11 @@ outPort: 0x0010,
 func (d *SimulatedJczDriver) GetStatus() BoardStatus {
 d.mu.Lock()
 defer d.mu.Unlock()
-
 rem := int(d.previewEnd - time.Now().Unix())
 active := rem > 0
 if !active {
 rem = 0
 }
-
 return BoardStatus{
 Platform:         fmt.Sprintf("%s (%s) [Simulation Mode]", runtime.GOOS, runtime.GOARCH),
 Connected:        true,
@@ -79,10 +77,14 @@ return nil
 }
 
 func (d *SimulatedJczDriver) RedLightPreview(sizeMM float64, speedParam int) error {
-return d.StartContinuousPreview(sizeMM, speedParam, 3)
+return d.StartShapePreview("square", sizeMM, speedParam, 3)
 }
 
 func (d *SimulatedJczDriver) StartContinuousPreview(sizeMM float64, speedParam int, timeoutSec int) error {
+return d.StartShapePreview("square", sizeMM, speedParam, timeoutSec)
+}
+
+func (d *SimulatedJczDriver) StartShapePreview(shape string, sizeMM float64, speedParam int, timeoutSec int) error {
 d.mu.Lock()
 defer d.mu.Unlock()
 if timeoutSec <= 0 {
