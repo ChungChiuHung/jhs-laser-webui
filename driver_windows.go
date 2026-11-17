@@ -11,6 +11,7 @@ import (
 "strings"
 "sync"
 "syscall"
+"time"
 "unsafe"
 )
 
@@ -148,6 +149,13 @@ status.InputPortBin = fmt.Sprintf("%016b", ioVal)
 status.OutputPortHex = fmt.Sprintf("0x%04X", d.outPort)
 status.OutputPortBin = fmt.Sprintf("%016b", d.outPort)
 
+// In0 與 In2 對應解鎖雷射頭與風扇開關監控
+in0 := (ioVal & (1 << 0)) != 0
+in2 := (ioVal & (1 << 2)) != 0
+status.HeadUnlocked = (in0 && in2)
+// In15 對應按鈕開關 (常開接地時按下變 0，未按為 1)
+status.ButtonPressed = (ioVal & (1 << 15)) == 0
+
 return status
 }
 
@@ -171,7 +179,6 @@ defer d.procClose.Call()
 d.outPort = (d.outPort & ^mask) | (val & mask)
 
 var res tagResult
-// 同時支援 (val, mask) 與 (mask, val) 並透過單一指令 0x0021 強制刷新硬體閂鎖
 d.procWritePort.Call(uintptr(unsafe.Pointer(&res)), 0, uintptr(d.outPort), uintptr(0xFFFF))
 d.procCmd.Call(uintptr(unsafe.Pointer(&res)), 0, 0x0021, uintptr(d.outPort), uintptr(0xFFFF), 0, 0, 0)
 return nil
@@ -196,5 +203,55 @@ defer d.procClose.Call()
 
 var res tagResult
 d.procCmd.Call(uintptr(unsafe.Pointer(&res)), 0, 0x000d, uintptr(x), uintptr(y), 0, 0, 0)
+return nil
+}
+
+// RedLightPreview 開啟紅光位元並驅動振鏡繞行正方形外框 3 圈以供肉眼確認紅光與振鏡連動
+func (d *WindowsJczDriver) RedLightPreview(halfSpan uint16) error {
+d.mu.Lock()
+defer d.mu.Unlock()
+
+if err := d.prepareEnv(); err != nil {
+return err
+}
+ret, _, _ := d.procOpenNew.Call()
+if int32(ret) <= 0 {
+d.procOpen.Call(0)
+}
+handle, _, _ := d.procGetHandle.Call(0)
+if handle == 0 {
+return fmt.Errorf("無法開啟控制卡")
+}
+defer d.procClose.Call()
+
+var res tagResult
+// 1. 開啟 Out8 (RedPt) 紅光位元
+redPort := d.outPort | (1 << 8)
+d.procWritePort.Call(uintptr(unsafe.Pointer(&res)), 0, uintptr(redPort), uintptr(0xFFFF))
+d.procCmd.Call(uintptr(unsafe.Pointer(&res)), 0, 0x0021, uintptr(redPort), uintptr(0xFFFF), 0, 0, 0)
+
+// 2. 計算中心點 (32768, 32768) 四角座標並動態掃描 3 圈
+if halfSpan == 0 || halfSpan > 30000 {
+halfSpan = 12000 // 約 40x40 mm 範圍
+}
+c := uint16(32768)
+pts := [][2]uint16{
+{c - halfSpan, c - halfSpan},
+{c + halfSpan, c - halfSpan},
+{c + halfSpan, c + halfSpan},
+{c - halfSpan, c + halfSpan},
+{c - halfSpan, c - halfSpan},
+}
+
+for loop := 0; loop < 3; loop++ {
+for _, pt := range pts {
+d.procCmd.Call(uintptr(unsafe.Pointer(&res)), 0, 0x000d, uintptr(pt[0]), uintptr(pt[1]), 0, 0, 0)
+time.Sleep(35 * time.Millisecond)
+}
+}
+
+// 3. 回到中心點並還原原本的 OutPort 狀態
+d.procCmd.Call(uintptr(unsafe.Pointer(&res)), 0, 0x000d, uintptr(c), uintptr(c), 0, 0, 0)
+d.procWritePort.Call(uintptr(unsafe.Pointer(&res)), 0, uintptr(d.outPort), uintptr(0xFFFF))
 return nil
 }

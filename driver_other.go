@@ -47,6 +47,8 @@ OutputPortBin: fmt.Sprintf("%016b", d.outPort),
 FieldSizeMM:   "110 x 110 mm (Raycus Fiber 20-80kHz)",
 TotalParts:    "34957",
 TotalTimeSec:  "22009",
+HeadUnlocked:  true,
+ButtonPressed: false,
 }
 }
 
@@ -62,5 +64,9 @@ d.mu.Lock()
 defer d.mu.Unlock()
 d.galvoX = x
 d.galvoY = y
+return nil
+}
+
+func (d *SimulatedJczDriver) RedLightPreview(halfSpan uint16) error {
 return nil
 }
