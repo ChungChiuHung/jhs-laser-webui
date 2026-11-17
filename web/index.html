@@ -82,7 +82,7 @@
           <button class="btn-sm" onclick="setAllOutputs(0xFFFF, 0x0000)" style="background:#475569; color:#fff;">全部關閉 (Reset 0)</button>
         </div>
       </h3>
-      <small style="color:var(--muted); display:block; margin-bottom:8px;">點擊下方任一腳位即可切換 HIGH (1) / LOW (0) 輸出狀態。Out0~Out7 位於 CON5 (DB25)；Out8 為紅光指示 (RedPt)。</small>
+      <small style="color:var(--muted); display:block; margin-bottom:8px;">點擊下方任一腳位即可切換 ON (1) / OFF (0) 輸出電位。Out0~Out7 位於 CON5 (DB25)；Out8 為紅光指示 (RedPt)。</small>
       <div class="io-grid" id="outGrid"></div>
     </div>
   </div>
@@ -92,7 +92,7 @@
 
     async function fetchStatus() {
       try {
-        const res = await fetch("/api/status");
+        const res = await fetch("/api/status?t=" + Date.now());
         const data = await res.json();
         document.getElementById("platform").textContent = "運行環境: " + data.platform;
         const badge = document.getElementById("connBadge");
@@ -120,7 +120,6 @@
         document.getElementById("ioHex").textContent = data.input_port_hex;
         document.getElementById("outHex").textContent = data.output_port_hex || "0x0000";
 
-        // 渲染輸入 IO
         const grid = document.getElementById("ioGrid");
         grid.innerHTML = "";
         const bin = data.input_port_bin || "0000000000000000";
@@ -136,7 +135,6 @@
           grid.appendChild(div);
         }
 
-        // 渲染輸出 IO 控制按鈕
         const outGrid = document.getElementById("outGrid");
         outGrid.innerHTML = "";
         currentOutBin = data.output_port_bin || "0000000000000000";

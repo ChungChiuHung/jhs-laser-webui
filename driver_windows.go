@@ -57,10 +57,10 @@ func NewLaserController(ezcadDir string) LaserController {
 
 func (d *WindowsJczDriver) prepareEnv() error {
 .\.git\if runtime.GOARCH != "386" {
-.\.github\return fmt.Errorf("LMCMIO.dll 為 32 位元動態庫，請使用 GOARCH=386 編譯 (目前為 %s)", runtime.GOARCH)
+.\.github\return fmt.Errorf("LMCMIO.dll requires GOARCH=386 (current: %s)", runtime.GOARCH)
 .\.git\}
 .\.git\if err := os.Chdir(d.ezcadDir); err != nil {
-.\.github\return fmt.Errorf("無法切換至 EzCad 目錄 (%s): %v", d.ezcadDir, err)
+.\.github\return fmt.Errorf("chdir error (%s): %v", d.ezcadDir, err)
 .\.git\}
 .\.git\return d.dll.Load()
 }
@@ -147,11 +147,9 @@ func (d *WindowsJczDriver) WriteOutputPort(mask uint16, val uint16) error {
 .\.git\}
 .\.git\defer d.procClose.Call()
 
-.\.git\// 根據位元遮罩更新目標輸出狀態
 .\.git\d.outPort = (d.outPort & ^mask) | (val & mask)
 
 .\.git\var res tagResult
-.\.git\// 呼叫 MIO_WritePort (對應單一命令 0x0021)，傳入最新 16-bit 輸出值與遮罩
 .\.git\d.procWritePort.Call(uintptr(unsafe.Pointer(&res)), 0, uintptr(d.outPort), uintptr(0xFFFF))
 .\.git\return nil
 }

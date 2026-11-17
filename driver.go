@@ -1,6 +1,5 @@
 package main
 
-// BoardStatus 定義回傳給 Web UI 的完整設備狀態
 type BoardStatus struct {
 .\.git\Platform      string `json:"platform"`
 .\.git\Connected     bool   `json:"connected"`
@@ -17,13 +16,12 @@ type BoardStatus struct {
 .\.git\InputPortBin  string `json:"input_port_bin"`
 .\.git\OutputPortHex string `json:"output_port_hex"`
 .\.git\OutputPortBin string `json:"output_port_bin"`
-.\.git\LaserReady    bool   `json:"laser_ready"` // In0
-.\.git\XOrg0         bool   `json:"x_org0"`      // In14 (CON4 Pin 1)
-.\.git\YOrg0         bool   `json:"y_org0"`      // In15 (CON4 Pin 2)
+.\.git\LaserReady    bool   `json:"laser_ready"`
+.\.git\XOrg0         bool   `json:"x_org0"`
+.\.git\YOrg0         bool   `json:"y_org0"`
 .\.git\ErrorMsg      string `json:"error_msg,omitempty"`
 }
 
-// LaserController 抽象介面，隔離 Windows DLL 與 Linux 實作
 type LaserController interface {
 .\.git\GetStatus() BoardStatus
 .\.git\WriteOutputPort(mask uint16, val uint16) error
