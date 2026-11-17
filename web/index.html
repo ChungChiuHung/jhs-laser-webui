@@ -43,7 +43,7 @@
   <div class="container">
     <header>
       <div>
-        <h1 style="margin:0; font-size:22px;">JHS 雷射打標設備監控面板 <span style="font-size:13px; color:var(--ok);">[振鏡 8ms 穩定控制修復版]</span></h1>
+        <h1 style="margin:0; font-size:22px;">JHS 雷射打標設備監控面板 <span style="font-size:13px; color:var(--ok);">[原廠 FPGA WriteCmdBuf 硬體無聲插補版]</span></h1>
         <small id="platform" style="color:var(--muted);">載入中...</small>
       </div>
       <div style="display:flex; gap:12px; align-items:center;">
@@ -104,11 +104,11 @@
         <div style="margin-top:12px; padding-top:10px; border-top:1px dashed #334155;">
           <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px; font-size:13px;">
             邊長: <input type="number" id="previewSizeMM" value="15" min="2" max="90" style="width:48px;"> mm
-            步進間隔:
+            FPGA硬體速度(0x8006):
             <select id="stepDelayMs">
-              <option value="25">快速 (25ms/頂點)</option>
-              <option value="35" selected>標準正方形 (35ms/頂點 - 已驗證)</option>
-              <option value="55">輕柔慢速 (55ms/頂點)</option>
+              <option value="3500">高速 (0x0DAC)</option>
+              <option value="2090" selected>原廠預設無聲 (0x082A = 3000mm/s)</option>
+              <option value="1000">柔順慢速 (0x03E8)</option>
             </select>
             時間: <input type="number" id="previewTimeout" value="15" min="2" max="120" style="width:45px;"> 秒
           </div>
