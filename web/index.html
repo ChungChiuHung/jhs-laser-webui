@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>JHS 雷射打標設備 Web 監控中心 (靜音平滑預覽版)</title>
+  <title>JHS 雷射打標設備 Web 監控中心 (S-Curve 極靜音版)</title>
   <style>
     :root { --bg: #0f172a; --card: #1e293b; --text: #f8fafc; --muted: #94a3b8; --ok: #22c55e; --warn: #f59e0b; --err: #ef4444; --accent: #38bdf8; }
     body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; }
@@ -34,14 +34,15 @@
     button { background: var(--accent); color: #0f172a; border: none; padding: 8px 14px; border-radius: 6px; font-weight: 600; cursor: pointer; }
     button:hover { opacity: 0.9; }
     .btn-sm { padding: 5px 12px; font-size: 12px; border-radius: 4px; }
-    input[type="number"] { background: #0f172a; border: 1px solid #334155; color: var(--text); padding: 6px 8px; border-radius: 6px; width: 72px; }
+    input[type="number"], select { background: #0f172a; border: 1px solid #334155; color: var(--text); padding: 6px 8px; border-radius: 6px; }
+    input[type="number"] { width: 68px; }
   </style>
 </head>
 <body>
   <div class="container">
     <header>
       <div>
-        <h1 style="margin:0; font-size:22px;">JHS 雷射打標設備監控面板 <span style="font-size:13px; color:var(--ok);">[靜音微步插補版]</span></h1>
+        <h1 style="margin:0; font-size:22px;">JHS 雷射打標設備監控面板 <span style="font-size:13px; color:var(--ok);">[S-Curve 餘弦加減速超靜音版]</span></h1>
         <small id="platform" style="color:var(--muted);">載入中...</small>
       </div>
       <div style="display:flex; gap:12px; align-items:center;">
@@ -87,20 +88,26 @@
       </div>
 
       <div class="card">
-        <h3><span>振鏡平滑控制與正方形預覽 (最大範圍 110mm)</span></h3>
+        <h3><span>振鏡 S-Curve 靜音控制與正方形預覽</span></h3>
         <div class="kv"><span>標刻緩衝區 (0x000A)</span><span id="listState">-</span></div>
         <div class="kv"><span>振鏡 X / Y 座標</span><span id="galvoXY">-</span></div>
         <div style="margin-top:10px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
           X: <input type="number" id="inputX" value="32768" min="0" max="65535">
           Y: <input type="number" id="inputY" value="32768" min="0" max="65535">
-          <button onclick="moveGalvo()">平滑移動</button>
+          <button onclick="moveGalvo()">S-Curve 移動</button>
           <button onclick="resetCenter()" style="background:#475569; color:#fff;">歸零中心</button>
         </div>
         <div style="margin-top:12px; padding-top:10px; border-top:1px dashed #334155; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
-          <div style="font-size:13px;">
-            預覽正方形邊長 (mm): <input type="number" id="previewSizeMM" value="20" min="2" max="90" style="width:55px;"> mm
+          <div style="font-size:13px; display:flex; gap:6px; align-items:center;">
+            邊長: <input type="number" id="previewSizeMM" value="20" min="2" max="90" style="width:48px;"> mm
+            模式:
+            <select id="smoothSteps">
+              <option value="450" selected>極靜音柔順 (450步/邊)</option>
+              <option value="250">標準靜音 (250步/邊)</option>
+              <option value="120">高速預覽 (120步/邊)</option>
+            </select>
           </div>
-          <button class="btn-sm" onclick="runRedLightFrame()" style="background:#ef4444; color:#fff;">靜音繪製正方形預覽 (連動Out4)</button>
+          <button class="btn-sm" onclick="runRedLightFrame()" style="background:#ef4444; color:#fff;">S-Curve 超靜音預覽</button>
         </div>
       </div>
     </div>
@@ -290,10 +297,11 @@
 
     async function runRedLightFrame() {
       const sizeMM = parseFloat(document.getElementById('previewSizeMM').value) || 20;
+      const smoothSteps = parseInt(document.getElementById('smoothSteps').value, 10) || 450;
       await fetch('/api/redlight', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({SizeMM: sizeMM})
+        body: JSON.stringify({SizeMM: sizeMM, SmoothSteps: smoothSteps})
       });
       fetchStatus();
     }

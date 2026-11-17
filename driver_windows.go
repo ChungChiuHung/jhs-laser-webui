@@ -5,13 +5,13 @@ package main
 import (
 "bufio"
 "fmt"
+"math"
 "os"
 "path/filepath"
 "runtime"
 "strings"
 "sync"
 "syscall"
-"time"
 "unsafe"
 )
 
@@ -182,18 +182,23 @@ d.procCmd.Call(uintptr(unsafe.Pointer(&res)), 0, 0x0021, uintptr(d.outPort), uin
 return nil
 }
 
-// smoothMove 採用線性微步插補將振鏡平滑移動至目標點，避免大跨距瞬間跳躍造成振鏡馬達異音
-func (d *WindowsJczDriver) smoothMove(fromX, fromY, toX, toY uint16, steps int, delay time.Duration) {
-var res tagResult
-dx := (float64(toX) - float64(fromX)) / float64(steps)
-dy := (float64(toY) - float64(fromY)) / float64(steps)
-for s := 1; s <= steps; s++ {
-nx := uint16(float64(fromX) + dx*float64(s))
-ny := uint16(float64(fromY) + dy*float64(s))
-d.procCmd.Call(uintptr(unsafe.Pointer(&res)), 0, 0x000d, uintptr(nx), uintptr(ny), 0, 0, 0)
-if delay > 0 {
-time.Sleep(delay)
+// sCurveMove 採用餘弦 S-Curve 柔性加減速曲線，且不使用 Windows time.Sleep (避免 15.6ms 排程器抖動)，讓轉角完全靜音無頓挫
+func (d *WindowsJczDriver) sCurveMove(fromX, fromY, toX, toY uint16, steps int) {
+if steps < 10 {
+steps = 10
 }
+var res tagResult
+fx, fy := float64(fromX), float64(fromY)
+dx := float64(toX) - fx
+dy := float64(toY) - fy
+
+for s := 1; s <= steps; s++ {
+t := float64(s) / float64(steps)
+// 餘弦 S-Curve 加減速：起點與轉角處速度平滑趨近於 0，消除急停撞擊聲
+ease := (1.0 - math.Cos(t*math.Pi)) / 2.0
+nx := uint16(fx + dx*ease)
+ny := uint16(fy + dy*ease)
+d.procCmd.Call(uintptr(unsafe.Pointer(&res)), 0, 0x000d, uintptr(nx), uintptr(ny), 0, 0, 0)
 }
 }
 
@@ -217,12 +222,12 @@ defer d.procClose.Call()
 var res tagResult
 d.procCmd.Call(uintptr(unsafe.Pointer(&res)), 0, 0x000c, 0, 0, 0, 0, 0)
 curX, curY := res.v1, res.v2
-d.smoothMove(curX, curY, x, y, 25, time.Millisecond)
+d.sCurveMove(curX, curY, x, y, 200)
 return nil
 }
 
-// RedLightPreview 同步開啟 Out4 (標刻紅光輸出) 與 Out8，並以微步插補靜音描繪正方形外框
-func (d *WindowsJczDriver) RedLightPreview(sizeMM float64) error {
+// RedLightPreview 採用 S-Curve 餘弦加減速連續微步插補，徹底消除轉角頓挫與 Windows 計時器抖動噪音
+func (d *WindowsJczDriver) RedLightPreview(sizeMM float64, smoothSteps int) error {
 d.mu.Lock()
 defer d.mu.Unlock()
 
@@ -239,20 +244,24 @@ return fmt.Errorf("無法開啟控制卡")
 }
 defer d.procClose.Call()
 
-// 限制預覽尺寸在 2mm ~ 90mm 安全範圍內 (全幅面 110mm = 65535 DAC, 1mm ≈ 595.77 DAC)
 if sizeMM < 2 {
 sizeMM = 20
 }
 if sizeMM > 90 {
 sizeMM = 90
 }
+if smoothSteps < 50 || smoothSteps > 1200 {
+smoothSteps = 300 // 預設每邊 300 步 S-Curve 超靜音插補
+}
 halfSpan := uint16((sizeMM / 2.0) * (65535.0 / 110.0))
 
 var res tagResult
-// 1. 同時開啟 Out4 (MarkOut 紅光連動向) 與 Out8 (RedPt)
-previewPort := d.outPort | (1 << 4) | (1 << 8)
-d.procWritePort.Call(uintptr(unsafe.Pointer(&res)), 0, uintptr(previewPort), uintptr(0xFFFF))
-d.procCmd.Call(uintptr(unsafe.Pointer(&res)), 0, 0x0021, uintptr(previewPort), uintptr(0xFFFF), 0, 0, 0)
+// 讀取當前振鏡真實位置作為平滑起點
+d.procCmd.Call(uintptr(unsafe.Pointer(&res)), 0, 0x000c, 0, 0, 0, 0, 0)
+startX, startY := res.v1, res.v2
+if startX == 0 && startY == 0 {
+startX, startY = 32768, 32768
+}
 
 c := uint16(32768)
 corners := [][2]uint16{
@@ -263,28 +272,24 @@ corners := [][2]uint16{
 {c - halfSpan, c - halfSpan},
 }
 
-// 先從中心點平滑移動至起點角
-d.smoothMove(c, c, corners[0][0], corners[0][1], 20, time.Millisecond)
+// 1. 先在無光狀態下，以 S-Curve 靜音滑行至第一個轉角起點
+d.sCurveMove(startX, startY, corners[0][0], corners[0][1], smoothSteps/2)
 
-// 根據邊長動態決定插補步數 (每步約 0.6mm，確保高速且安靜無聲)
-stepsPerEdge := int(sizeMM / 0.6)
-if stepsPerEdge < 15 {
-stepsPerEdge = 15
-}
-if stepsPerEdge > 80 {
-stepsPerEdge = 80
-}
+// 2. 開啟 Out4 (標刻紅光輸出) 與 Out8 (RedPt)
+previewPort := d.outPort | (1 << 4) | (1 << 8)
+d.procWritePort.Call(uintptr(unsafe.Pointer(&res)), 0, uintptr(previewPort), uintptr(0xFFFF))
+d.procCmd.Call(uintptr(unsafe.Pointer(&res)), 0, 0x0021, uintptr(previewPort), uintptr(0xFFFF), 0, 0, 0)
 
-// 2. 靜音平滑掃描 3 圈正方形
+// 3. 以 S-Curve 餘弦加減速連續靜音掃描 3 圈正方形 (每個 90 度轉角皆自動柔順減速再加速)
 for loop := 0; loop < 3; loop++ {
 for i := 0; i < 4; i++ {
-d.smoothMove(corners[i][0], corners[i][1], corners[i+1][0], corners[i+1][1], stepsPerEdge, time.Millisecond)
+d.sCurveMove(corners[i][0], corners[i][1], corners[i+1][0], corners[i+1][1], smoothSteps)
 }
 }
 
-// 3. 平滑回到中心點 (32768, 32768) 並還原原本的 OutPort 狀態
-d.smoothMove(corners[4][0], corners[4][1], c, c, 20, time.Millisecond)
+// 4. 關閉預覽輸出並以 S-Curve 靜音滑行回中心點 (32768, 32768)
 d.procWritePort.Call(uintptr(unsafe.Pointer(&res)), 0, uintptr(d.outPort), uintptr(0xFFFF))
 d.procCmd.Call(uintptr(unsafe.Pointer(&res)), 0, 0x0021, uintptr(d.outPort), uintptr(0xFFFF), 0, 0, 0)
+d.sCurveMove(corners[4][0], corners[4][1], c, c, smoothSteps/2)
 return nil
 }

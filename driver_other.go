@@ -67,6 +67,6 @@ d.galvoY = y
 return nil
 }
 
-func (d *SimulatedJczDriver) RedLightPreview(sizeMM float64) error {
+func (d *SimulatedJczDriver) RedLightPreview(sizeMM float64, smoothSteps int) error {
 return nil
 }
