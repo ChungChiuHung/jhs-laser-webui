@@ -26,6 +26,7 @@ Error        string         `json:"error,omitempty"`
 ModuleCount  int            `json:"module_count"`
 QuietZone    int            `json:"quiet_zone"`
 ECC          string         `json:"ecc"`
+MaskPattern  int            `json:"mask_pattern"`
 OverallMM    float64        `json:"overall_mm"`
 CodeMM       float64        `json:"code_mm"`
 ModuleMM     float64        `json:"module_mm"`
@@ -45,10 +46,6 @@ return "0"
 }
 return s
 }
-
-// ============================================================================
-// 純 Go 零依賴 ISO/IEC 18004 QRCode 編碼器 (支援 Version 1~10 Byte 模式與 L/M/Q/H 容錯)
-// ============================================================================
 
 type qrMatrix struct {
 size    int
@@ -124,7 +121,6 @@ numBlk2  int
 dataCW2  int
 }
 
-// 涵蓋 Version 1 ~ 10 的標準 RS 區塊參數表 (可容納高達 271 Bytes UTF-8 文字/網址)
 var qrSpecs = []qrSpec{
 {1, "L", 26, 7, 1, 19, 0, 0}, {1, "M", 26, 10, 1, 16, 0, 0}, {1, "Q", 26, 13, 1, 13, 0, 0}, {1, "H", 26, 17, 1, 9, 0, 0},
 {2, "L", 44, 10, 1, 34, 0, 0}, {2, "M", 44, 16, 1, 28, 0, 0}, {2, "Q", 44, 22, 1, 22, 0, 0}, {2, "H", 44, 28, 1, 16, 0, 0},
@@ -152,7 +148,109 @@ return "M"
 }
 }
 
-func encodePureQR(text, ecc string) (*qrMatrix, string, error) {
+func applyMaskCond(mask, r, c int) bool {
+switch mask {
+case 0:
+return (r+c)%2 == 0
+case 1:
+return r%2 == 0
+case 2:
+return c%3 == 0
+case 3:
+return (r+c)%3 == 0
+case 4:
+return (r/2+c/3)%2 == 0
+case 5:
+return (r*c)%2+(r*c)%3 == 0
+case 6:
+return ((r*c)%2+(r*c)%3)%2 == 0
+case 7:
+return ((r+c)%2+(r*c)%3)%2 == 0
+}
+return false
+}
+
+func calcMaskPenalty(mods [][]bool) int {
+sz := len(mods)
+penalty := 0
+for r := 0; r < sz; r++ {
+runColor := mods[r][0]
+runLen := 1
+for c := 1; c < sz; c++ {
+if mods[r][c] == runColor {
+runLen++
+if runLen == 5 {
+penalty += 3
+} else if runLen > 5 {
+penalty++
+}
+} else {
+runColor = mods[r][c]
+runLen = 1
+}
+}
+}
+for c := 0; c < sz; c++ {
+runColor := mods[0][c]
+runLen := 1
+for r := 1; r < sz; r++ {
+if mods[r][c] == runColor {
+runLen++
+if runLen == 5 {
+penalty += 3
+} else if runLen > 5 {
+penalty++
+}
+} else {
+runColor = mods[r][c]
+runLen = 1
+}
+}
+}
+for r := 0; r < sz-1; r++ {
+for c := 0; c < sz-1; c++ {
+v := mods[r][c]
+if mods[r][c+1] == v && mods[r+1][c] == v && mods[r+1][c+1] == v {
+penalty += 3
+}
+}
+}
+return penalty
+}
+
+// 嚴格依照 ISO/IEC 18004 寫入 15-bit 格式資訊
+func writeFormatBits(mods [][]bool, ecc string, mask int) {
+sz := len(mods)
+eccBits := map[string]int{"M": 0, "L": 1, "H": 2, "Q": 3}[ecc]
+data := (eccBits << 3) | mask
+rem := data
+for i := 0; i < 10; i++ {
+rem = (rem << 1) ^ ((rem >> 9) * 0x537)
+}
+bits := ((data << 10) | rem) ^ 0x5412
+
+// 垂直方向 (左上定位標記右側, 第 8 欄)
+for i := 0; i < 6; i++ {
+mods[i][8] = ((bits >> i) & 1) != 0
+}
+mods[7][8] = ((bits >> 6) & 1) != 0
+mods[8][8] = ((bits >> 7) & 1) != 0
+mods[8][7] = ((bits >> 8) & 1) != 0
+for i := 9; i < 15; i++ {
+mods[8][14-i] = ((bits >> i) & 1) != 0
+}
+
+// 水平與左下副本
+for i := 0; i < 8; i++ {
+mods[8][sz-1-i] = ((bits >> i) & 1) != 0
+}
+for i := 8; i < 15; i++ {
+mods[sz-15+i][8] = ((bits >> i) & 1) != 0
+}
+mods[sz-8][8] = true
+}
+
+func encodePureQR(text, ecc string) (*qrMatrix, string, int, error) {
 ecc = normalizeECC(ecc)
 raw := []byte(text)
 var chosen *qrSpec
@@ -168,7 +266,7 @@ break
 }
 }
 if chosen == nil {
-return nil, ecc, fmt.Errorf("文字長度 (%d bytes) 超過 Version 10 (%s 容錯) 上限", len(raw), ecc)
+return nil, ecc, 0, fmt.Errorf("文字長度 (%d bytes) 超過 Version 10 (%s 容錯) 上限", len(raw), ecc)
 }
 
 totalDataCW := chosen.numBlk1*chosen.dataCW1 + chosen.numBlk2*chosen.dataCW2
@@ -178,7 +276,6 @@ for i := n - 1; i >= 0; i-- {
 bits = append(bits, (val>>i)&1)
 }
 }
-// Byte mode (0100) + 8-bit length (ver 1..9) or 16-bit length (ver 10)
 pushBits(0x4, 4)
 if chosen.ver <= 9 {
 pushBits(len(raw), 8)
@@ -209,7 +306,6 @@ dataCW[i] = pads[pIdx%2]
 pIdx++
 }
 
-// 切割區塊並計算 Reed-Solomon 糾錯碼
 numBlocks := chosen.numBlk1 + chosen.numBlk2
 dataBlocks := make([][]byte, numBlocks)
 ecBlocks := make([][]byte, numBlocks)
@@ -244,20 +340,17 @@ allCW = append(allCW, ecBlocks[b][i])
 }
 
 sz := chosen.ver*4 + 17
-m := &qrMatrix{
-size:    sz,
-modules: make([][]bool, sz),
-isFunc:  make([][]bool, sz),
-}
+baseMods := make([][]bool, sz)
+isFunc := make([][]bool, sz)
 for r := 0; r < sz; r++ {
-m.modules[r] = make([]bool, sz)
-m.isFunc[r] = make([]bool, sz)
+baseMods[r] = make([]bool, sz)
+isFunc[r] = make([]bool, sz)
 }
 
 setFunc := func(r, c int, dark bool) {
 if r >= 0 && c >= 0 && r < sz && c < sz {
-m.modules[r][c] = dark
-m.isFunc[r][c] = true
+baseMods[r][c] = dark
+isFunc[r][c] = true
 }
 }
 
@@ -275,11 +368,25 @@ drawFinder(0, 0)
 drawFinder(0, sz-7)
 drawFinder(sz-7, 0)
 
-// 對齊圖形 (Alignment Patterns)
+// 先畫時序線 (Timing Patterns) 並標記為功能區，確保後續對齊圖形不會覆蓋到時序線
+for i := 8; i < sz-8; i++ {
+setFunc(6, i, i%2 == 0)
+setFunc(i, 6, i%2 == 0)
+}
+
+// 繪製對齊圖形 (Alignment Patterns)：僅在 5x5 完全不與定位標記或時序線重疊時繪製
 ac := alignCoords[chosen.ver]
 for _, r := range ac {
 for _, c := range ac {
-if m.isFunc[r][c] {
+overlap := false
+for dr := -2; dr <= 2; dr++ {
+for dc := -2; dc <= 2; dc++ {
+if isFunc[r+dr][c+dc] {
+overlap = true
+}
+}
+}
+if overlap {
 continue
 }
 for dr := -2; dr <= 2; dr++ {
@@ -291,22 +398,12 @@ setFunc(r+dr, c+dc, dark)
 }
 }
 
-// 時序圖形 (Timing Patterns)
-for i := 8; i < sz-8; i++ {
-if !m.isFunc[6][i] {
-setFunc(6, i, i%2 == 0)
-}
-if !m.isFunc[i][6] {
-setFunc(i, 6, i%2 == 0)
-}
-}
-
-// 保留格式與版本資訊區
+// 保留格式資訊區
 for i := 0; i <= 8; i++ {
-if !m.isFunc[8][i] {
+if !isFunc[8][i] {
 setFunc(8, i, false)
 }
-if !m.isFunc[i][8] {
+if !isFunc[i][8] {
 setFunc(i, 8, false)
 }
 }
@@ -332,7 +429,17 @@ setFunc(i/3, sz-11+i%3, dark)
 }
 }
 
-// 蛇形填入資料位元並套用 Mask 0 ((r+c)%2 == 0)
+bestMask := 0
+bestScore := math.MaxInt32
+var bestMods [][]bool
+
+for mask := 0; mask < 8; mask++ {
+mods := make([][]bool, sz)
+for r := 0; r < sz; r++ {
+mods[r] = make([]bool, sz)
+copy(mods[r], baseMods[r])
+}
+
 bitIdx := 0
 totalBits := len(allCW) * 8
 upward := true
@@ -347,7 +454,7 @@ r = step
 }
 for dx := 0; dx < 2; dx++ {
 c := right - dx
-if m.isFunc[r][c] {
+if isFunc[r][c] {
 continue
 }
 dark := false
@@ -355,49 +462,27 @@ if bitIdx < totalBits {
 dark = ((allCW[bitIdx/8] >> (7 - bitIdx%8)) & 1) != 0
 bitIdx++
 }
-if (r+c)%2 == 0 {
+if applyMaskCond(mask, r, c) {
 dark = !dark
 }
-m.modules[r][c] = dark
+mods[r][c] = dark
 }
 }
 upward = !upward
 }
 
-// 寫入格式資訊 (ECC + Mask 0)
-eccBits := map[string]int{"M": 0, "L": 1, "H": 2, "Q": 3}[ecc]
-fmtData := (eccBits << 3) | 0
-rem := fmtData << 10
-for i := 14; i >= 10; i-- {
-if (rem>>i)&1 != 0 {
-rem ^= 0x537 << (i - 10)
-}
-}
-fmtWord := ((fmtData << 10) | rem) ^ 0x5412
-for i := 0; i < 15; i++ {
-dark := (fmtWord>>i)&1 != 0
-if i < 6 {
-m.modules[8][i] = dark
-} else if i < 8 {
-m.modules[8][i+1] = dark
-} else {
-m.modules[8][sz-15+i] = dark
-}
-if i < 8 {
-m.modules[sz-1-i][8] = dark
-} else if i < 9 {
-m.modules[15-i][8] = dark
-} else {
-m.modules[14-i][8] = dark
+writeFormatBits(mods, ecc, mask)
+
+score := calcMaskPenalty(mods)
+if score < bestScore {
+bestScore = score
+bestMask = mask
+bestMods = mods
 }
 }
 
-return m, ecc, nil
+return &qrMatrix{size: sz, modules: bestMods, isFunc: isFunc}, ecc, bestMask, nil
 }
-
-// ============================================================================
-// 合併閉合輪廓追蹤與 SVG / AutoCAD R12 DXF 向量匯出引擎 (移植自附件 HTML)
-// ============================================================================
 
 func traceQRContours(m *qrMatrix) [][][2]int {
 n := m.size
@@ -537,14 +622,14 @@ if req.SizeMM > 95.0 {
 req.SizeMM = 95.0
 }
 quiet := req.QuietZone
-if quiet < 0 {
+if quiet <= 0 {
 quiet = 4
 }
 if quiet > 10 {
 quiet = 10
 }
 
-mat, eccLabel, err := encodePureQR(text, req.ECC)
+mat, eccLabel, bestMask, err := encodePureQR(text, req.ECC)
 if err != nil {
 return QRVectorResponse{OK: false, Error: err.Error()}
 }
@@ -617,6 +702,7 @@ OK:           true,
 ModuleCount:  n,
 QuietZone:    quiet,
 ECC:          eccLabel,
+MaskPattern:  bestMask,
 OverallMM:    math.Round(overallMM*1000) / 1000,
 CodeMM:       math.Round(codeMM*1000) / 1000,
 ModuleMM:     math.Round(moduleMM*1000) / 1000,

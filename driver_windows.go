@@ -874,7 +874,7 @@ if hatchStep > 0 && hatchStep < 0.02 {
 hatchStep = 0.02
 }
 if hatchStep > 0 {
-mat, _, err := encodePureQR(strings.TrimSpace(req.Text), req.ECC)
+mat, _, _, err := encodePureQR(strings.TrimSpace(req.Text), req.ECC)
 if err == nil {
 n := mat.size
 m := vec.ModuleMM
