@@ -29,7 +29,7 @@ words [1536]uint16
 // GalvoCalib 儲存從 plug\markcfg7 讀取的出廠光學幾何校正參數
 type GalvoCalib struct {
 FieldSizeMM   float64
-GalvoXSwap    int
+GalvoXSwap    float64
 Aspect0       float64
 Aspect1       float64
 Distor0       float64
@@ -38,6 +38,8 @@ HorVer0       float64
 HorVer1       float64
 TrapeDistor0  float64
 TrapeDistor1  float64
+Negate0       float64
+Negate1       float64
 RedOffsetX    float64
 RedOffsetY    float64
 RedScaleX     float64
@@ -130,9 +132,8 @@ d.lastY.Store(32768)
 return d
 }
 
-// mmToGalvoDAC 使用 markcfg7 出廠光學幾何校正公式 (Aspect0/1, Distor, TrapeDistor, HorVer) 將物理毫米座標精確換算為 16-bit DAC 座標
+// mmToGalvoDAC 依照 markcfg7 的 GALVOX 軸映射與 Aspect/100.0 正向比例進行光學校正
 func (d *WindowsJczDriver) mmToGalvoDAC(xMM, yMM float64, isRedLight bool) (uint16, uint16) {
-// 1. 若為紅光預覽，先套用 markcfg7 中的 REDLIGHTSCALE 與 REDLIGHTOFFSETX/Y 對齊補償
 if isRedLight {
 xMM = xMM*d.calib.RedScaleX + d.calib.RedOffsetX
 yMM = yMM*d.calib.RedScaleY + d.calib.RedOffsetY
@@ -143,30 +144,50 @@ if halfField <= 0 {
 halfField = 55.0
 }
 
-// 歸一化座標 (-1.0 ~ +1.0)
 nx := xMM / halfField
 ny := yMM / halfField
 
-// 2. 平行四邊形垂直度校正 (GALVOHORVER0 / GALVOHORVER1)
-nx = nx + (d.calib.HorVer0-1.0)*ny
-ny = ny + (d.calib.HorVer1-1.0)*nx
+// 依據 GALVOX=1 決定 X 與 Y 分別對應哪一組振鏡通道參數 (0 或 1)
+aspX, aspY := d.calib.Aspect0, d.calib.Aspect1
+distX, distY := d.calib.Distor0, d.calib.Distor1
+hvX, hvY := d.calib.HorVer0, d.calib.HorVer1
+trpX, trpY := d.calib.TrapeDistor0, d.calib.TrapeDistor1
+negX, negY := d.calib.Negate0, d.calib.Negate1
 
-// 3. 梯形畸變校正 (GALVOTRAPEDISTOR0 / GALVOTRAPEDISTOR1)
-nx = nx * (1.0 + (d.calib.TrapeDistor0-1.0)*ny)
-ny = ny * (1.0 + (d.calib.TrapeDistor1-1.0)*nx)
+if int(math.Round(d.calib.GalvoXSwap)) == 1 {
+aspX, aspY = d.calib.Aspect1, d.calib.Aspect0
+distX, distY = d.calib.Distor1, d.calib.Distor0
+hvX, hvY = d.calib.HorVer1, d.calib.HorVer0
+trpX, trpY = d.calib.TrapeDistor1, d.calib.TrapeDistor0
+negX, negY = d.calib.Negate1, d.calib.Negate0
+}
 
-// 4. 枕狀/桶狀畸變校正 (GALVODISTOR0 / GALVODISTOR1)
+// 1. 平行四邊形垂直度校正
+nx = nx + (hvX-1.0)*ny
+ny = ny + (hvY-1.0)*nx
+
+// 2. 梯形畸變校正
+nx = nx * (1.0 + (trpX-1.0)*ny)
+ny = ny * (1.0 + (trpY-1.0)*nx)
+
+// 3. 枕狀/桶狀畸變校正
 r2 := nx*nx + ny*ny
-nx = nx * (1.0 + (d.calib.Distor0-1.0)*r2)
-ny = ny * (1.0 + (d.calib.Distor1-1.0)*r2)
+nx = nx * (1.0 + (distX-1.0)*r2)
+ny = ny * (1.0 + (distY-1.0)*r2)
 
-// 5. 套用最關鍵的雙軸真實物理比例 GALVOASPECT0 (83.684) 與 GALVOASPECT1 (91.371)！
-// 標準比例基準為 100.0，因此實際 DAC 幅度需乘以 (100.0 / Aspect) 補償兩軸 9.18% 的行程差異
-aspectScaleX := 100.0 / d.calib.Aspect0
-aspectScaleY := 100.0 / d.calib.Aspect1
+// 4. 關鍵修正：套用正向比例 (Aspect / 100.0)，消除先前的反向放大倍差
+scaleX := aspX / 100.0
+scaleY := aspY / 100.0
 
-dacX := 32768.0 + nx*32767.0*aspectScaleX
-dacY := 32768.0 + ny*32767.0*aspectScaleY
+if int(math.Round(negX)) == 1 {
+nx = -nx
+}
+if int(math.Round(negY)) == 1 {
+ny = -ny
+}
+
+dacX := 32768.0 + nx*32767.0*scaleX
+dacY := 32768.0 + ny*32767.0*scaleY
 
 if dacX < 0 {
 dacX = 0
@@ -180,7 +201,6 @@ dacY = 65535
 }
 return uint16(math.Round(dacX)), uint16(math.Round(dacY))
 }
-
 func (d *WindowsJczDriver) readMarkCfg7(status *BoardStatus) {
 cfgPath := filepath.Join(d.ezcadDir, "plug", "markcfg7")
 f, err := os.Open(cfgPath)
@@ -206,7 +226,7 @@ status.TotalParts = strings.TrimPrefix(line, "TOTALPARTNUM=")
 } else if strings.HasPrefix(line, "MARKTOTALTIME=") {
 status.TotalTimeSec = strings.TrimPrefix(line, "MARKTOTALTIME=")
 }
-parseVal(line, "FIELDSIZE=", &d.calib.FieldSizeMM)
+parseVal(line, "FIELDSIZE=", &d.calib.FieldSizeMM); parseVal(line, "GALVOX=", &d.calib.GalvoXSwap); parseVal(line, "GALVONEGATE0=", &d.calib.Negate0); parseVal(line, "GALVONEGATE1=", &d.calib.Negate1)
 parseVal(line, "GALVOASPECT0=", &d.calib.Aspect0)
 parseVal(line, "GALVOASPECT1=", &d.calib.Aspect1)
 parseVal(line, "GALVODISTOR0=", &d.calib.Distor0)
