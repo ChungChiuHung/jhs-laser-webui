@@ -103,14 +103,14 @@
 
         <div style="margin-top:12px; padding-top:10px; border-top:1px dashed #334155;">
           <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px; font-size:13px;">
-            邊長: <input type="number" id="previewSizeMM" value="30" min="5" max="90" style="width:48px;"> mm
+            邊長: <input type="number" id="previewSizeMM" value="15" min="2" max="90" style="width:48px;"> mm
             步進間隔:
             <select id="stepDelayMs">
-              <option value="5">快速 (5ms/步)</option>
-              <option value="8" selected>穩定柔和 (8ms/步 - 推薦)</option>
-              <option value="15">慢速安靜 (15ms/步)</option>
+              <option value="25">快速 (25ms/頂點)</option>
+              <option value="35" selected>標準正方形 (35ms/頂點 - 已驗證)</option>
+              <option value="55">輕柔慢速 (55ms/頂點)</option>
             </select>
-            時間: <input type="number" id="previewTimeout" value="30" min="5" max="120" style="width:45px;"> 秒
+            時間: <input type="number" id="previewTimeout" value="15" min="2" max="120" style="width:45px;"> 秒
           </div>
           <div style="display:flex; gap:8px; flex-wrap:wrap;">
             <button class="btn-sm" onclick="runSinglePreview()" style="background:var(--warn); color:#0f172a;">單次預覽 (3圈)</button>
