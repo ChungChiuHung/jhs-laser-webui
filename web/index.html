@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>JHS 雷射打標設備 Web 監控中心 (S-Curve 極靜音版)</title>
+  <title>JHS 雷射打標設備 Web 監控中心 (持續預覽對位版)</title>
   <style>
     :root { --bg: #0f172a; --card: #1e293b; --text: #f8fafc; --muted: #94a3b8; --ok: #22c55e; --warn: #f59e0b; --err: #ef4444; --accent: #38bdf8; }
     body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; }
@@ -31,18 +31,19 @@
     .out-btn:hover { border-color: var(--accent); transform: translateY(-1px); }
     .out-btn.active { border-color: var(--warn); color: var(--warn); background: rgba(245,158,11,0.22); box-shadow: 0 0 10px rgba(245,158,11,0.35); }
     .pin-val { font-size: 15px; font-weight: bold; margin-top: 4px; }
-    button { background: var(--accent); color: #0f172a; border: none; padding: 8px 14px; border-radius: 6px; font-weight: 600; cursor: pointer; }
+    button { background: var(--accent); color: #0f172a; border: none; padding: 8px 14px; border-radius: 6px; font-weight: 600; cursor: pointer; transition: all 0.15s; }
     button:hover { opacity: 0.9; }
-    .btn-sm { padding: 5px 12px; font-size: 12px; border-radius: 4px; }
+    .btn-sm { padding: 6px 12px; font-size: 12.5px; border-radius: 6px; }
+    .preview-banner { display: none; margin-top: 10px; padding: 10px 12px; border-radius: 8px; background: rgba(239,68,68,0.18); border: 1px solid var(--err); color: #fca5a5; justify-content: space-between; align-items: center; font-size: 13.5px; font-weight: 600; }
     input[type="number"], select { background: #0f172a; border: 1px solid #334155; color: var(--text); padding: 6px 8px; border-radius: 6px; }
-    input[type="number"] { width: 68px; }
+    input[type="number"] { width: 62px; }
   </style>
 </head>
 <body>
   <div class="container">
     <header>
       <div>
-        <h1 style="margin:0; font-size:22px;">JHS 雷射打標設備監控面板 <span style="font-size:13px; color:var(--ok);">[S-Curve 餘弦加減速超靜音版]</span></h1>
+        <h1 style="margin:0; font-size:22px;">JHS 雷射打標設備監控面板 <span style="font-size:13px; color:var(--ok);">[0dB 持續對位預覽 + 30秒保護版]</span></h1>
         <small id="platform" style="color:var(--muted);">載入中...</small>
       </div>
       <div style="display:flex; gap:12px; align-items:center;">
@@ -88,26 +89,35 @@
       </div>
 
       <div class="card">
-        <h3><span>振鏡 S-Curve 靜音控制與正方形預覽</span></h3>
-        <div class="kv"><span>標刻緩衝區 (0x000A)</span><span id="listState">-</span></div>
-        <div class="kv"><span>振鏡 X / Y 座標</span><span id="galvoXY">-</span></div>
-        <div style="margin-top:10px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+        <h3>
+          <span>振鏡 0dB 無聲控制與持續預覽對位</span>
+          <span id="previewBadge" class="badge ok" style="font-size:12px; padding:3px 10px;">待機中</span>
+        </h3>
+        <div class="kv"><span>標刻緩衝區 / 振鏡座標</span><span id="galvoXY">-</span></div>
+        <div style="margin-top:8px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
           X: <input type="number" id="inputX" value="32768" min="0" max="65535">
           Y: <input type="number" id="inputY" value="32768" min="0" max="65535">
-          <button onclick="moveGalvo()">S-Curve 移動</button>
-          <button onclick="resetCenter()" style="background:#475569; color:#fff;">歸零中心</button>
+          <button class="btn-sm" onclick="moveGalvo()">無聲移動</button>
+          <button class="btn-sm" onclick="resetCenter()" style="background:#475569; color:#fff;">歸零中心</button>
         </div>
-        <div style="margin-top:12px; padding-top:10px; border-top:1px dashed #334155; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
-          <div style="font-size:13px; display:flex; gap:6px; align-items:center;">
+
+        <div style="margin-top:12px; padding-top:10px; border-top:1px dashed #334155;">
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px; font-size:13px;">
             邊長: <input type="number" id="previewSizeMM" value="20" min="2" max="90" style="width:48px;"> mm
-            模式:
+            保護時間: <input type="number" id="previewTimeout" value="30" min="5" max="120" style="width:48px;"> 秒
             <select id="smoothSteps">
-              <option value="450" selected>極靜音柔順 (450步/邊)</option>
-              <option value="250">標準靜音 (250步/邊)</option>
-              <option value="120">高速預覽 (120步/邊)</option>
+              <option value="1200" selected>0dB 完全無聲</option>
+              <option value="450">柔和靜音</option>
             </select>
           </div>
-          <button class="btn-sm" onclick="runRedLightFrame()" style="background:#ef4444; color:#fff;">S-Curve 超靜音預覽</button>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button class="btn-sm" id="btnStartLoop" onclick="startContinuousPreview()" style="background:var(--ok); color:#0f172a; flex:1;">▶ 啟動 30 秒持續預覽 (雙手對位)</button>
+            <button class="btn-sm" id="btnStopLoop" onclick="stopContinuousPreview()" style="background:var(--err); color:#fff; flex:1;">■ 立即停止預覽 (歸零)</button>
+          </div>
+          <div id="previewBanner" class="preview-banner">
+            <span>● 紅光預覽持續掃描中... 自動停止倒數：<b id="remainSec" style="font-size:16px; color:#fff;">30</b> 秒</span>
+            <button class="btn-sm" onclick="stopContinuousPreview()" style="background:#fff; color:#dc2626; padding:3px 10px;">立即停止</button>
+          </div>
         </div>
       </div>
     </div>
@@ -185,10 +195,24 @@
         const sec = parseInt(data.total_time_sec || '22009', 10);
         document.getElementById('totalTime').textContent = sec + ' 秒 (約 ' + (sec / 3600).toFixed(1) + ' 小時)';
 
-        document.getElementById('listState').textContent = data.list_ready ? '就緒 (' + data.list_state_hex + ')' : '忙碌 (' + data.list_state_hex + ')';
-        document.getElementById('galvoXY').textContent = 'X: ' + data.galvo_x + ' | Y: ' + data.galvo_y;
+        const listStr = data.list_ready ? '就緒' : '忙碌';
+        document.getElementById('galvoXY').textContent = listStr + ' | X: ' + data.galvo_x + ' , Y: ' + data.galvo_y;
         document.getElementById('ioHex').textContent = data.input_port_hex;
         document.getElementById('outHex').textContent = data.output_port_hex || '0x0000';
+
+        // 更新持續預覽倒數計時橫幅與狀態標籤
+        const pBanner = document.getElementById('previewBanner');
+        const pBadge = document.getElementById('previewBadge');
+        if (data.preview_active) {
+          pBanner.style.display = 'flex';
+          document.getElementById('remainSec').textContent = data.preview_remain_sec;
+          pBadge.textContent = '預覽掃描中 (' + data.preview_remain_sec + 's)';
+          pBadge.className = 'badge warn';
+        } else {
+          pBanner.style.display = 'none';
+          pBadge.textContent = '待機中';
+          pBadge.className = 'badge ok';
+        }
 
         const bin = data.input_port_bin || '0000000000000000';
         const in0 = bin[15 - 0];
@@ -295,14 +319,20 @@
       moveGalvo();
     }
 
-    async function runRedLightFrame() {
+    async function startContinuousPreview() {
       const sizeMM = parseFloat(document.getElementById('previewSizeMM').value) || 20;
-      const smoothSteps = parseInt(document.getElementById('smoothSteps').value, 10) || 450;
-      await fetch('/api/redlight', {
+      const smoothSteps = parseInt(document.getElementById('smoothSteps').value, 10) || 1200;
+      const timeoutSec = parseInt(document.getElementById('previewTimeout').value, 10) || 30;
+      await fetch('/api/preview/start', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({SizeMM: sizeMM, SmoothSteps: smoothSteps})
+        body: JSON.stringify({SizeMM: sizeMM, SmoothSteps: smoothSteps, TimeoutSec: timeoutSec})
       });
+      fetchStatus();
+    }
+
+    async function stopContinuousPreview() {
+      await fetch('/api/preview/stop', { method: 'POST' });
       fetchStatus();
     }
 
