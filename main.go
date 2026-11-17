@@ -43,16 +43,6 @@ SmoothSteps int
 TimeoutSec  int
 }
 
-type axisReq struct {
-Axis    int
-DeltaMM float64
-Speed   int
-}
-
-type zReq struct {
-ZDac uint16
-}
-
 func main() {
 exePath, _ := os.Executable()
 defaultDir := filepath.Dir(exePath)
@@ -144,54 +134,6 @@ return
 }
 _ = controller.StopPreview()
 w.Header().Set("Content-Type", "application/json")
-json.NewEncoder(w).Encode(map[string]any{"ok": true})
-})
-
-mux.HandleFunc("/api/axis/move", func(w http.ResponseWriter, r *http.Request) {
-if r.Method != http.MethodPost {
-http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-return
-}
-var req axisReq
-_ = json.NewDecoder(r.Body).Decode(&req)
-err := controller.MoveAxisRelMM(req.Axis, req.DeltaMM, req.Speed)
-w.Header().Set("Content-Type", "application/json")
-if err != nil {
-json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": err.Error()})
-return
-}
-json.NewEncoder(w).Encode(map[string]any{"ok": true})
-})
-
-mux.HandleFunc("/api/axis/origin", func(w http.ResponseWriter, r *http.Request) {
-if r.Method != http.MethodPost {
-http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-return
-}
-var req axisReq
-_ = json.NewDecoder(r.Body).Decode(&req)
-err := controller.AxisGoOrigin(req.Axis)
-w.Header().Set("Content-Type", "application/json")
-if err != nil {
-json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": err.Error()})
-return
-}
-json.NewEncoder(w).Encode(map[string]any{"ok": true})
-})
-
-mux.HandleFunc("/api/galvoz", func(w http.ResponseWriter, r *http.Request) {
-if r.Method != http.MethodPost {
-http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-return
-}
-var req zReq
-_ = json.NewDecoder(r.Body).Decode(&req)
-err := controller.SetGalvoZ(req.ZDac)
-w.Header().Set("Content-Type", "application/json")
-if err != nil {
-json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": err.Error()})
-return
-}
 json.NewEncoder(w).Encode(map[string]any{"ok": true})
 })
 
