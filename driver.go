@@ -27,11 +27,13 @@ ErrorMsg         string `json:"error_msg,omitempty"`
 }
 
 type MarkRequest struct {
-Shape      string  `json:"shape"`       // "square", "circle", "cross"
-SizeMM     float64 `json:"size_mm"`     // 圖形尺寸 (mm)
-PowerPct   float64 `json:"power_pct"`   // 雷射功率百分比 (1 ~ 100%)
-SpeedWord  uint16  `json:"speed_word"`  // 雕刻速度參數 (原廠預設 348 = 0x015c)
-FreqWord   uint16  `json:"freq_word"`   // 光纖頻率參數 (原廠預設 1000 = 0x03e8)
+Shape     string  `json:"shape"`      // "circle", "square", "cross"
+SizeMM    float64 `json:"size_mm"`    // 目標直徑或邊長 (mm)
+ScaleX    float64 `json:"scale_x"`    // X 軸真圓度比例補償 (預設 1.000)
+ScaleY    float64 `json:"scale_y"`    // Y 軸真圓度比例補償 (預設 1.000)
+PowerPct  float64 `json:"power_pct"`  // 雷射功率百分比 (1 ~ 100%)
+SpeedWord uint16  `json:"speed_word"` // 雕刻速度參數 (預設 348)
+FreqWord  uint16  `json:"freq_word"`  // 光纖頻率參數 (預設 1000)
 }
 
 type LaserController interface {
