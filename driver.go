@@ -26,6 +26,14 @@ PreviewRemainSec int    `json:"preview_remain_sec"`
 ErrorMsg         string `json:"error_msg,omitempty"`
 }
 
+type MarkRequest struct {
+Shape      string  `json:"shape"`       // "square", "circle", "cross"
+SizeMM     float64 `json:"size_mm"`     // 圖形尺寸 (mm)
+PowerPct   float64 `json:"power_pct"`   // 雷射功率百分比 (1 ~ 100%)
+SpeedWord  uint16  `json:"speed_word"`  // 雕刻速度參數 (原廠預設 348 = 0x015c)
+FreqWord   uint16  `json:"freq_word"`   // 光纖頻率參數 (原廠預設 1000 = 0x03e8)
+}
+
 type LaserController interface {
 GetStatus() BoardStatus
 WriteOutputPort(mask uint16, val uint16) error
@@ -33,4 +41,5 @@ GotoXY(x uint16, y uint16) error
 RedLightPreview(sizeMM float64, speedParam int) error
 StartContinuousPreview(sizeMM float64, speedParam int, timeoutSec int) error
 StopPreview() error
+ExecuteLaserMark(req MarkRequest) error
 }

@@ -153,9 +153,28 @@ w.Header().Set("Content-Type", "application/json")
 json.NewEncoder(w).Encode(map[string]any{"ok": true})
 })
 
+mux.HandleFunc("/api/mark", func(w http.ResponseWriter, r *http.Request) {
+if r.Method != http.MethodPost {
+http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+return
+}
+var req MarkRequest
+if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+http.Error(w, err.Error(), http.StatusBadRequest)
+return
+}
+err := controller.ExecuteLaserMark(req)
+w.Header().Set("Content-Type", "application/json")
+if err != nil {
+json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": err.Error()})
+return
+}
+json.NewEncoder(w).Encode(map[string]any{"ok": true})
+})
+
 addr := fmt.Sprintf("%s:%d", *host, *port)
 url := fmt.Sprintf("http://127.0.0.1:%d", *port)
-fmt.Printf("=== JHS Laser WebUI 單機版控制中心 ===\n")
+fmt.Printf("=== JHS Laser WebUI 單機版控制中心 (F1 預覽 + F2 實際打標完整版) ===\n")
 fmt.Printf("本機訪問網址 : %s\n", url)
 fmt.Printf("綁定驅動目錄 : %s\n", *ezcadDir)
 

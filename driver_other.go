@@ -20,9 +20,10 @@ previewEnd int64
 
 func NewLaserController(ezcadDir string) LaserController {
 return &SimulatedJczDriver{
-galvoX: 32768,
-galvoY: 32768,
-inPort: 0xC01F,
+galvoX:  32768,
+galvoY:  32768,
+inPort:  0xC01F,
+outPort: 0x0010,
 }
 }
 
@@ -77,11 +78,11 @@ d.galvoY = y
 return nil
 }
 
-func (d *SimulatedJczDriver) RedLightPreview(sizeMM float64, stepDelayMs int) error {
-return nil
+func (d *SimulatedJczDriver) RedLightPreview(sizeMM float64, speedParam int) error {
+return d.StartContinuousPreview(sizeMM, speedParam, 3)
 }
 
-func (d *SimulatedJczDriver) StartContinuousPreview(sizeMM float64, stepDelayMs int, timeoutSec int) error {
+func (d *SimulatedJczDriver) StartContinuousPreview(sizeMM float64, speedParam int, timeoutSec int) error {
 d.mu.Lock()
 defer d.mu.Unlock()
 if timeoutSec <= 0 {
@@ -95,5 +96,9 @@ func (d *SimulatedJczDriver) StopPreview() error {
 d.mu.Lock()
 defer d.mu.Unlock()
 d.previewEnd = 0
+return nil
+}
+
+func (d *SimulatedJczDriver) ExecuteLaserMark(req MarkRequest) error {
 return nil
 }

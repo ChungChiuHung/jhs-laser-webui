@@ -3,11 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>JHS 雷射打標設備 Web 監控中心 (穩定振鏡控制版)</title>
+  <title>JHS 雷射打標設備 Web 控制中心 (F1 紅光預覽 + F2 實際打標版)</title>
   <style>
     :root { --bg: #0f172a; --card: #1e293b; --text: #f8fafc; --muted: #94a3b8; --ok: #22c55e; --warn: #f59e0b; --err: #ef4444; --accent: #38bdf8; }
     body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; }
-    .container { max-width: 1120px; margin: 0 auto; }
+    .container { max-width: 1140px; margin: 0 auto; }
     header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #334155; padding-bottom: 14px; margin-bottom: 16px; }
     .badge { padding: 6px 12px; border-radius: 999px; font-weight: 600; font-size: 13.5px; }
     .badge.ok { background: rgba(34,197,94,0.2); color: var(--ok); }
@@ -36,14 +36,14 @@
     .btn-sm { padding: 6px 12px; font-size: 12.5px; border-radius: 6px; }
     .preview-banner { display: none; margin-top: 10px; padding: 10px 12px; border-radius: 8px; background: rgba(239,68,68,0.18); border: 1px solid var(--err); color: #fca5a5; justify-content: space-between; align-items: center; font-size: 13.5px; font-weight: 600; }
     input[type="number"], select { background: #0f172a; border: 1px solid #334155; color: var(--text); padding: 6px 8px; border-radius: 6px; }
-    input[type="number"] { width: 65px; }
+    input[type="number"] { width: 62px; }
   </style>
 </head>
 <body>
   <div class="container">
     <header>
       <div>
-        <h1 style="margin:0; font-size:22px;">JHS 雷射打標設備監控面板 <span style="font-size:13px; color:var(--ok);">[原廠 FPGA WriteCmdBuf 硬體無聲插補版]</span></h1>
+        <h1 style="margin:0; font-size:22px;">JHS 雷射打標設備 Web 控制中心 <span style="font-size:13px; color:var(--ok);">[F1 無縫紅光預覽 + F2 原廠雷射雕刻完整版]</span></h1>
         <small id="platform" style="color:var(--muted);">載入中...</small>
       </div>
       <div style="display:flex; gap:12px; align-items:center;">
@@ -71,10 +71,10 @@
       </div>
       <div class="status-box">
         <div>
-          <div style="font-size:12px; color:var(--muted);">標刻/紅光輸出 (Out4)</div>
-          <div style="font-size:15px; font-weight:700; margin-top:4px;" id="markOutText">OFF (0)</div>
+          <div style="font-size:12px; color:var(--muted);">標刻輸出埠 (Out4 Active-Low)</div>
+          <div style="font-size:15px; font-weight:700; margin-top:4px;" id="markOutText">0x0010 (待機)</div>
         </div>
-        <button class="btn-sm" onclick="toggleOut4Quick()" style="background:var(--warn);">切換 Out4 開關</button>
+        <button class="btn-sm" onclick="toggleOut4Quick()" style="background:var(--warn);">切換 Out4 電位</button>
       </div>
     </div>
 
@@ -85,36 +85,36 @@
         <div class="kv"><span>韌體版本 / 板卡序號</span><span id="fwSerial">-</span></div>
         <div class="kv"><span>機台鏡片範圍與雷射源</span><span id="fieldSize">-</span></div>
         <div class="kv"><span>歷史累計打標數量 (TOTALPARTNUM)</span><span id="totalParts" style="color:var(--warn);">-</span></div>
-        <div class="kv"><span>四紅點系統說明</span><span style="color:var(--accent); font-family:sans-serif; font-size:12px;">2點斜射重合調Z軸焦距 + 1點中心 + 1點Out4掃描預覽</span></div>
+        <div class="kv"><span>四紅點系統說明</span><span style="color:var(--accent); font-family:sans-serif; font-size:12px;">2點斜射重合調Z軸焦距 + 1點中心 + 1點掃描預覽</span></div>
       </div>
 
       <div class="card">
         <h3>
-          <span>振鏡定位控制與紅光正方形預覽</span>
+          <span>F1 紅光無縫預覽對位 (雙緩衝 FIFO 串流)</span>
           <span id="previewBadge" class="badge ok" style="font-size:12px; padding:3px 10px;">待機中</span>
         </h3>
         <div class="kv"><span>標刻緩衝區 / 振鏡座標</span><span id="galvoXY">-</span></div>
         <div style="margin-top:8px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
           X: <input type="number" id="inputX" value="32768" min="0" max="65535">
           Y: <input type="number" id="inputY" value="32768" min="0" max="65535">
-          <button class="btn-sm" onclick="moveGalvo()">移動振鏡 (0x000D)</button>
+          <button class="btn-sm" onclick="moveGalvo()">無聲移動</button>
           <button class="btn-sm" onclick="resetCenter()" style="background:#475569; color:#fff;">歸零中心 (32768)</button>
         </div>
 
         <div style="margin-top:12px; padding-top:10px; border-top:1px dashed #334155;">
           <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px; font-size:13px;">
-            邊長: <input type="number" id="previewSizeMM" value="15" min="2" max="90" style="width:48px;"> mm
-            FPGA硬體速度(0x8006):
+            尺寸: <input type="number" id="previewSizeMM" value="15" min="2" max="90" style="width:48px;"> mm
+            FPGA速度:
             <select id="stepDelayMs">
               <option value="3500">高速 (0x0DAC)</option>
-              <option value="2090" selected>原廠預設無聲 (0x082A = 3000mm/s)</option>
+              <option value="2090" selected>原廠標準無聲 (0x082A)</option>
               <option value="1000">柔順慢速 (0x03E8)</option>
             </select>
-            時間: <input type="number" id="previewTimeout" value="15" min="2" max="120" style="width:45px;"> 秒
+            時間: <input type="number" id="previewTimeout" value="30" min="5" max="120" style="width:45px;"> 秒
           </div>
           <div style="display:flex; gap:8px; flex-wrap:wrap;">
-            <button class="btn-sm" onclick="runSinglePreview()" style="background:var(--warn); color:#0f172a;">單次預覽 (3圈)</button>
-            <button class="btn-sm" onclick="startContinuousPreview()" style="background:var(--ok); color:#0f172a; flex:1;">▶ 啟動 30 秒持續預覽</button>
+            <button class="btn-sm" onclick="runSinglePreview()" style="background:var(--warn); color:#0f172a;">預覽 3 秒</button>
+            <button class="btn-sm" onclick="startContinuousPreview()" style="background:var(--ok); color:#0f172a; flex:1;">▶ 啟動 30 秒持續預覽 (F1)</button>
             <button class="btn-sm" onclick="stopContinuousPreview()" style="background:var(--err); color:#fff;">■ 停止</button>
           </div>
           <div id="previewBanner" class="preview-banner">
@@ -125,13 +125,43 @@
       </div>
     </div>
 
+    <!-- 新增：F2 實際雷射打標控制中心 (100% 移植 Frida 破譯之 MO 預熱 + 0x8012 功率 + 0x8005 雕刻序列) -->
+    <div class="card" style="margin-top:14px; border: 1.5px solid var(--err);">
+      <h3>
+        <span style="color:#f87171;">★ F2 實際雷射出光雕刻控制中心 (Raycus 1064nm 光纖雷射 - MO 0x0033 + MarkTo 0x8005)</span>
+        <span id="markStatusBadge" class="badge ok" style="font-size:12px;">雷射源安全待機 (MO=0)</span>
+      </h3>
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; font-size:13.5px;">
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+          雕刻圖形:
+          <select id="markShape" style="font-weight:600;">
+            <option value="circle" selected>圓形 (36段平滑微角 p3=3744)</option>
+            <option value="square">正方形外框 (4邊直線)</option>
+            <option value="cross">中心十字準星</option>
+          </select>
+          尺寸(mm): <input type="number" id="markSizeMM" value="10" min="1" max="80" style="width:52px;" onchange="syncPreviewSize()">
+          功率(%): <input type="number" id="markPowerPct" value="30" min="1" max="100" style="width:52px; border-color:var(--warn); color:var(--warn); font-weight:bold;">
+          雕刻速度(0x800C):
+          <select id="markSpeedWord">
+            <option value="180">深雕慢速 (180)</option>
+            <option value="348" selected>原廠標準速度 (348 = 0x015C)</option>
+            <option value="700">淺雕快速 (700)</option>
+          </select>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button class="btn-sm" onclick="syncAndPreview()" style="background:var(--accent); color:#0f172a;">先用 F1 紅光預覽此尺寸</button>
+          <button class="btn-sm" onclick="executeLaserMark()" style="background:var(--err); color:#fff; padding:8px 18px; font-size:13.5px; box-shadow:0 0 12px rgba(239,68,68,0.4);">⚡ 執行實際雷射打標 (F2 出光)</button>
+        </div>
+      </div>
+    </div>
+
     <div class="card" style="margin-top:14px;">
       <h3>
-        <span>16 路輸出 IO 互動控制 (MIO_WritePort: <span id="outHex">0x0000</span>)</span>
+        <span>16 路輸出 IO 互動控制 (MIO_WritePort: <span id="outHex">0x0010</span>)</span>
         <div style="display:flex; gap:8px;">
-          <button class="btn-sm" onclick="toggleOutputPin(4, true)" style="background:var(--ok); color:#0f172a;">開啟 Out4 (標刻/紅光輸出)</button>
-          <button class="btn-sm" onclick="toggleOutputPin(4, false)" style="background:#475569; color:#fff;">關閉 Out4</button>
-          <button class="btn-sm" onclick="setAllOutputs(0xFFFF, 0x0000)" style="background:#334155; color:#fff;">全部歸零</button>
+          <button class="btn-sm" onclick="toggleOutputPin(4, true)" style="background:var(--ok); color:#0f172a;">Out4 設為 1 (0x0010 待機)</button>
+          <button class="btn-sm" onclick="toggleOutputPin(4, false)" style="background:var(--warn); color:#0f172a;">Out4 拉低為 0 (0x0000 標刻導通)</button>
+          <button class="btn-sm" onclick="setAllOutputs(0xFFFF, 0x0010)" style="background:#334155; color:#fff;">恢復原廠待機 (0x0010)</button>
         </div>
       </h3>
       <div class="io-grid" id="outGrid"></div>
@@ -147,11 +177,11 @@
   </div>
 
   <script>
-    let lastOut4State = false;
+    let lastOut4State = true;
 
     const outHwMap = {
-      4: { text: '★標刻/紅光輸出', verified: true },
-      8: { text: 'RedPt (輔助)', verified: false },
+      4: { text: '★標刻埠(低電位有效)', verified: true },
+      8: { text: '★RedPt(紅光0x0100)', verified: true },
       0: { text: 'CON5-Pin5', verified: false },
       1: { text: 'CON5-Pin17', verified: false },
       2: { text: 'CON5-Pin4', verified: false },
@@ -199,7 +229,7 @@
         const listStr = data.list_ready ? '就緒' : '忙碌';
         document.getElementById('galvoXY').textContent = listStr + ' | X: ' + data.galvo_x + ' , Y: ' + data.galvo_y;
         document.getElementById('ioHex').textContent = data.input_port_hex;
-        document.getElementById('outHex').textContent = data.output_port_hex || '0x0000';
+        document.getElementById('outHex').textContent = data.output_port_hex || '0x0010';
 
         const pBanner = document.getElementById('previewBanner');
         const pBadge = document.getElementById('previewBadge');
@@ -241,10 +271,10 @@
           btnBadge.className = 'badge ok';
         }
 
-        const currentOutBin = data.output_port_bin || '0000000000000000';
+        const currentOutBin = data.output_port_bin || '0000000000010000';
         lastOut4State = (currentOutBin[15 - 4] === '1');
-        document.getElementById('markOutText').textContent = lastOut4State ? 'ON (1) 已導通' : 'OFF (0) 關閉';
-        document.getElementById('markOutText').style.color = lastOut4State ? 'var(--warn)' : 'var(--text)';
+        document.getElementById('markOutText').textContent = lastOut4State ? 'HIGH (1) 待機關閉' : 'LOW (0) 標刻導通';
+        document.getElementById('markOutText').style.color = lastOut4State ? 'var(--ok)' : 'var(--warn)';
 
         const outGrid = document.getElementById('outGrid');
         outGrid.innerHTML = '';
@@ -320,8 +350,8 @@
     }
 
     async function runSinglePreview() {
-      const sizeMM = parseFloat(document.getElementById('previewSizeMM').value) || 30;
-      const stepDelayMs = parseInt(document.getElementById('stepDelayMs').value, 10) || 8;
+      const sizeMM = parseFloat(document.getElementById('previewSizeMM').value) || 15;
+      const stepDelayMs = parseInt(document.getElementById('stepDelayMs').value, 10) || 2090;
       await fetch('/api/redlight', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
@@ -331,8 +361,8 @@
     }
 
     async function startContinuousPreview() {
-      const sizeMM = parseFloat(document.getElementById('previewSizeMM').value) || 30;
-      const stepDelayMs = parseInt(document.getElementById('stepDelayMs').value, 10) || 8;
+      const sizeMM = parseFloat(document.getElementById('previewSizeMM').value) || 15;
+      const stepDelayMs = parseInt(document.getElementById('stepDelayMs').value, 10) || 2090;
       const timeoutSec = parseInt(document.getElementById('previewTimeout').value, 10) || 30;
       await fetch('/api/preview/start', {
         method: 'POST',
@@ -344,6 +374,42 @@
 
     async function stopContinuousPreview() {
       await fetch('/api/preview/stop', { method: 'POST' });
+      fetchStatus();
+    }
+
+    function syncPreviewSize() {
+      document.getElementById('previewSizeMM').value = document.getElementById('markSizeMM').value;
+    }
+
+    function syncAndPreview() {
+      syncPreviewSize();
+      startContinuousPreview();
+    }
+
+    async function executeLaserMark() {
+      const shape = document.getElementById('markShape').value;
+      const sizeMM = parseFloat(document.getElementById('markSizeMM').value) || 10;
+      const powerPct = parseFloat(document.getElementById('markPowerPct').value) || 30;
+      const speedWord = parseInt(document.getElementById('markSpeedWord').value, 10) || 348;
+
+      const mBadge = document.getElementById('markStatusBadge');
+      mBadge.textContent = '⚡ 雷射出光雕刻中 (MO=1)...';
+      mBadge.className = 'badge err';
+
+      await fetch('/api/mark', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          shape: shape,
+          size_mm: sizeMM,
+          power_pct: powerPct,
+          speed_word: speedWord,
+          freq_word: 1000
+        })
+      });
+
+      mBadge.textContent = '雕刻完成！已安全關閉 MO (MO=0)';
+      mBadge.className = 'badge ok';
       fetchStatus();
     }
 
