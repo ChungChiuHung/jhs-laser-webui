@@ -39,7 +39,7 @@ Val  uint16
 
 type redReq struct {
 SizeMM      float64
-SmoothSteps int
+StepDelayMs int
 TimeoutSec  int
 }
 
@@ -108,6 +108,22 @@ return
 json.NewEncoder(w).Encode(map[string]any{"ok": true})
 })
 
+mux.HandleFunc("/api/redlight", func(w http.ResponseWriter, r *http.Request) {
+if r.Method != http.MethodPost {
+http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+return
+}
+var req redReq
+_ = json.NewDecoder(r.Body).Decode(&req)
+err := controller.RedLightPreview(req.SizeMM, req.StepDelayMs)
+w.Header().Set("Content-Type", "application/json")
+if err != nil {
+json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": err.Error()})
+return
+}
+json.NewEncoder(w).Encode(map[string]any{"ok": true})
+})
+
 mux.HandleFunc("/api/preview/start", func(w http.ResponseWriter, r *http.Request) {
 if r.Method != http.MethodPost {
 http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
@@ -118,7 +134,7 @@ _ = json.NewDecoder(r.Body).Decode(&req)
 if req.TimeoutSec <= 0 {
 req.TimeoutSec = 30
 }
-err := controller.StartContinuousPreview(req.SizeMM, req.SmoothSteps, req.TimeoutSec)
+err := controller.StartContinuousPreview(req.SizeMM, req.StepDelayMs, req.TimeoutSec)
 w.Header().Set("Content-Type", "application/json")
 if err != nil {
 json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": err.Error()})

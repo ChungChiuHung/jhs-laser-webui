@@ -30,6 +30,7 @@ type LaserController interface {
 GetStatus() BoardStatus
 WriteOutputPort(mask uint16, val uint16) error
 GotoXY(x uint16, y uint16) error
-StartContinuousPreview(sizeMM float64, smoothSteps int, timeoutSec int) error
+RedLightPreview(sizeMM float64, stepDelayMs int) error
+StartContinuousPreview(sizeMM float64, stepDelayMs int, timeoutSec int) error
 StopPreview() error
 }

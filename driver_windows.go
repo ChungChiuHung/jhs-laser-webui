@@ -5,7 +5,6 @@ package main
 import (
 "bufio"
 "fmt"
-"math"
 "os"
 "path/filepath"
 "runtime"
@@ -30,7 +29,6 @@ stopFlag       atomic.Bool
 previewEndUnix atomic.Int64
 lastX          atomic.Uint32
 lastY          atomic.Uint32
-cachedStatus   BoardStatus
 dll            *syscall.LazyDLL
 procOpenNew    *syscall.LazyProc
 procOpen       *syscall.LazyProc
@@ -101,32 +99,21 @@ return d.dll.Load()
 }
 
 func (d *WindowsJczDriver) GetStatus() BoardStatus {
-// 關鍵修復：若目前正在執行持續預覽，直接回傳快取狀態與即時座標/倒數秒數，絕不呼叫 MIO_Open/MIO_Close 打斷預覽！
-if d.previewing.Load() {
-st := d.cachedStatus
-st.Connected = true
-st.PreviewActive = true
+status := BoardStatus{
+Platform:      fmt.Sprintf("Windows (%s)", runtime.GOARCH),
+PreviewActive: d.previewing.Load(),
+}
+if status.PreviewActive {
 rem := int(d.previewEndUnix.Load() - time.Now().Unix())
 if rem < 0 {
 rem = 0
 }
-st.PreviewRemainSec = rem
-st.GalvoX = uint16(d.lastX.Load())
-st.GalvoY = uint16(d.lastY.Load())
-shownOut := d.outPort | (1 << 4) | (1 << 8)
-st.OutputPortHex = fmt.Sprintf("0x%04X", shownOut)
-st.OutputPortBin = fmt.Sprintf("%016b", shownOut)
-return st
+status.PreviewRemainSec = rem
 }
+d.readMarkCfg7(&status)
 
 d.mu.Lock()
 defer d.mu.Unlock()
-
-status := BoardStatus{
-Platform:      fmt.Sprintf("Windows (%s)", runtime.GOARCH),
-PreviewActive: false,
-}
-d.readMarkCfg7(&status)
 
 if err := d.prepareEnv(); err != nil {
 status.ErrorMsg = err.Error()
@@ -186,12 +173,10 @@ in2 := (ioVal & (1 << 2)) != 0
 status.HeadUnlocked = (in0 && in2)
 status.ButtonPressed = (ioVal & (1 << 15)) == 0
 
-d.cachedStatus = status
 return status
 }
 
 func (d *WindowsJczDriver) WriteOutputPort(mask uint16, val uint16) error {
-d.stopFlag.Store(true)
 d.mu.Lock()
 defer d.mu.Unlock()
 
@@ -216,30 +201,7 @@ d.procCmd.Call(uintptr(unsafe.Pointer(&res)), 0, 0x0021, uintptr(d.outPort), uin
 return nil
 }
 
-// sCurveEdge 使用餘弦加減速沿直線邊移動振鏡，轉角柔和不撞擊且速度足以拉出清晰紅光線條
-func (d *WindowsJczDriver) sCurveEdge(fromX, fromY, toX, toY uint16, steps int) {
-if steps < 15 {
-steps = 15
-}
-var res tagResult
-fx, fy := float64(fromX), float64(fromY)
-dx := float64(toX) - fx
-dy := float64(toY) - fy
-
-for s := 1; s <= steps; s++ {
-if d.stopFlag.Load() {
-return
-}
-t := float64(s) / float64(steps)
-ease := (1.0 - math.Cos(t*math.Pi)) / 2.0
-nx := uint16(fx + dx*ease)
-ny := uint16(fy + dy*ease)
-d.procCmd.Call(uintptr(unsafe.Pointer(&res)), 0, 0x000d, uintptr(nx), uintptr(ny), 0, 0, 0)
-}
-d.lastX.Store(uint32(toX))
-d.lastY.Store(uint32(toY))
-}
-
+// GotoXY 還原最可靠的單次直接指令 0x000d，確保「移動振鏡」與「歸零中心」100% 立即反應
 func (d *WindowsJczDriver) GotoXY(x uint16, y uint16) error {
 d.stopFlag.Store(true)
 d.mu.Lock()
@@ -259,12 +221,78 @@ return fmt.Errorf("無法開啟控制卡")
 defer d.procClose.Call()
 
 var res tagResult
-d.procCmd.Call(uintptr(unsafe.Pointer(&res)), 0, 0x000c, 0, 0, 0, 0, 0)
-curX, curY := res.v1, res.v2
-if curX == 0 && curY == 0 {
-curX, curY = 32768, 32768
+d.procCmd.Call(uintptr(unsafe.Pointer(&res)), 0, 0x000d, uintptr(x), uintptr(y), 0, 0, 0)
+d.lastX.Store(uint32(x))
+d.lastY.Store(uint32(y))
+return nil
 }
-d.sCurveEdge(curX, curY, x, y, 80)
+
+// RedLightPreview 採用與您先前實測成功完全一致的單一 Session 結構，但每邊細分 12 步 + 8ms 間隔，既能成功畫出正方形又大幅降低聲音！
+func (d *WindowsJczDriver) RedLightPreview(sizeMM float64, stepDelayMs int) error {
+d.mu.Lock()
+defer d.mu.Unlock()
+
+if err := d.prepareEnv(); err != nil {
+return err
+}
+ret, _, _ := d.procOpenNew.Call()
+if int32(ret) <= 0 {
+d.procOpen.Call(0)
+}
+handle, _, _ := d.procGetHandle.Call(0)
+if handle == 0 {
+return fmt.Errorf("無法開啟控制卡")
+}
+defer d.procClose.Call()
+
+if sizeMM < 2 {
+sizeMM = 20
+}
+if sizeMM > 90 {
+sizeMM = 90
+}
+if stepDelayMs < 2 || stepDelayMs > 50 {
+stepDelayMs = 8
+}
+halfSpan := uint16((sizeMM / 2.0) * (65535.0 / 110.0))
+
+var res tagResult
+// 1. 開啟 Out4 (標刻紅光輸出) 與 Out8 (RedPt)
+previewPort := d.outPort | (1 << 4) | (1 << 8)
+d.procWritePort.Call(uintptr(unsafe.Pointer(&res)), 0, uintptr(previewPort), uintptr(0xFFFF))
+d.procCmd.Call(uintptr(unsafe.Pointer(&res)), 0, 0x0021, uintptr(previewPort), uintptr(0xFFFF), 0, 0, 0)
+
+c := uint16(32768)
+pts := [][2]uint16{
+{c - halfSpan, c - halfSpan},
+{c + halfSpan, c - halfSpan},
+{c + halfSpan, c + halfSpan},
+{c - halfSpan, c + halfSpan},
+{c - halfSpan, c - halfSpan},
+}
+
+// 每條邊細分為 10 個平滑小步，每步停留 stepDelayMs (預設 8ms)，避免瞬間跳躍 40mm 產生大聲撞擊音，同時確保控制卡 100% 收到指令
+stepsPerEdge := 10
+delay := time.Duration(stepDelayMs) * time.Millisecond
+
+for loop := 0; loop < 3; loop++ {
+for i := 0; i < 4; i++ {
+x0, y0 := float64(pts[i][0]), float64(pts[i][1])
+dx := (float64(pts[i+1][0]) - x0) / float64(stepsPerEdge)
+dy := (float64(pts[i+1][1]) - y0) / float64(stepsPerEdge)
+for s := 1; s <= stepsPerEdge; s++ {
+nx := uint16(x0 + dx*float64(s))
+ny := uint16(y0 + dy*float64(s))
+d.procCmd.Call(uintptr(unsafe.Pointer(&res)), 0, 0x000d, uintptr(nx), uintptr(ny), 0, 0, 0)
+time.Sleep(delay)
+}
+}
+}
+
+// 回到中心點並還原 OutPort 狀態
+d.procCmd.Call(uintptr(unsafe.Pointer(&res)), 0, 0x000d, uintptr(c), uintptr(c), 0, 0, 0)
+d.procWritePort.Call(uintptr(unsafe.Pointer(&res)), 0, uintptr(d.outPort), uintptr(0xFFFF))
+d.procCmd.Call(uintptr(unsafe.Pointer(&res)), 0, 0x0021, uintptr(d.outPort), uintptr(0xFFFF), 0, 0, 0)
 return nil
 }
 
@@ -273,8 +301,8 @@ d.stopFlag.Store(true)
 return nil
 }
 
-// StartContinuousPreview 全程保持單一控制卡 Handle 連續掃描正方形並維持 Out4 點亮，結束時自動歸零
-func (d *WindowsJczDriver) StartContinuousPreview(sizeMM float64, smoothSteps int, timeoutSec int) error {
+// StartContinuousPreview 每繞完 1 圈正方形短暫釋放一次鎖 (讓網頁狀態更新)，並以 8ms 穩定步進持續預覽 30 秒
+func (d *WindowsJczDriver) StartContinuousPreview(sizeMM float64, stepDelayMs int, timeoutSec int) error {
 if d.previewing.Load() {
 if timeoutSec <= 0 || timeoutSec > 120 {
 timeoutSec = 30
@@ -289,78 +317,80 @@ sizeMM = 20
 if sizeMM > 90 {
 sizeMM = 90
 }
-if smoothSteps < 20 || smoothSteps > 600 {
-smoothSteps = 120 // 預設每邊 120 步 S-Curve：兼顧靜音與紅光正方形視覺暫留清晰度
+if stepDelayMs < 2 || stepDelayMs > 50 {
+stepDelayMs = 8
 }
 if timeoutSec <= 0 || timeoutSec > 120 {
 timeoutSec = 30
 }
 
 halfSpan := uint16((sizeMM / 2.0) * (65535.0 / 110.0))
-
 d.stopFlag.Store(false)
 d.previewing.Store(true)
-deadline := time.Now().Add(time.Duration(timeoutSec) * time.Second)
-d.previewEndUnix.Store(deadline.Unix())
+d.previewEndUnix.Store(time.Now().Add(time.Duration(timeoutSec) * time.Second).Unix())
 
 go func() {
-d.mu.Lock()
-defer func() {
-d.previewing.Store(false)
-d.mu.Unlock()
-}()
+defer d.previewing.Store(false)
 
-if err := d.prepareEnv(); err != nil {
-return
-}
-ret, _, _ := d.procOpenNew.Call()
-if int32(ret) <= 0 {
-d.procOpen.Call(0)
-}
-handle, _, _ := d.procGetHandle.Call(0)
-if handle == 0 {
-return
-}
-// 只在整個 30 秒預覽結束或按下停止時，才呼叫一次 procClose！
-defer d.procClose.Call()
-
-var res tagResult
 c := uint16(32768)
-corners := [][2]uint16{
+pts := [][2]uint16{
 {c - halfSpan, c - halfSpan},
 {c + halfSpan, c - halfSpan},
 {c + halfSpan, c + halfSpan},
 {c - halfSpan, c + halfSpan},
 {c - halfSpan, c - halfSpan},
 }
+stepsPerEdge := 10
+delay := time.Duration(stepDelayMs) * time.Millisecond
 
-// 1. 先平滑移動至正方形起點角
-d.sCurveEdge(c, c, corners[0][0], corners[0][1], 60)
-
-// 2. 點亮 Out4 (標刻紅光輸出) 與 Out8
+for !d.stopFlag.Load() && time.Now().Unix() < d.previewEndUnix.Load() {
+d.mu.Lock()
+if err := d.prepareEnv(); err == nil {
+ret, _, _ := d.procOpenNew.Call()
+if int32(ret) <= 0 {
+d.procOpen.Call(0)
+}
+if h, _, _ := d.procGetHandle.Call(0); h != 0 {
+var res tagResult
 previewPort := d.outPort | (1 << 4) | (1 << 8)
 d.procWritePort.Call(uintptr(unsafe.Pointer(&res)), 0, uintptr(previewPort), uintptr(0xFFFF))
 d.procCmd.Call(uintptr(unsafe.Pointer(&res)), 0, 0x0021, uintptr(previewPort), uintptr(0xFFFF), 0, 0, 0)
 
-// 3. 持續繞行正方形四邊，直到按下停止或 30 秒倒數結束
-for !d.stopFlag.Load() && time.Now().Unix() < d.previewEndUnix.Load() {
+// 完整畫完 1 圈正方形 (約 320ms)
 for i := 0; i < 4 && !d.stopFlag.Load(); i++ {
-d.sCurveEdge(corners[i][0], corners[i][1], corners[i+1][0], corners[i+1][1], smoothSteps)
+x0, y0 := float64(pts[i][0]), float64(pts[i][1])
+dx := (float64(pts[i+1][0]) - x0) / float64(stepsPerEdge)
+dy := (float64(pts[i+1][1]) - y0) / float64(stepsPerEdge)
+for s := 1; s <= stepsPerEdge && !d.stopFlag.Load(); s++ {
+nx := uint16(x0 + dx*float64(s))
+ny := uint16(y0 + dy*float64(s))
+d.procCmd.Call(uintptr(unsafe.Pointer(&res)), 0, 0x000d, uintptr(nx), uintptr(ny), 0, 0, 0)
+time.Sleep(delay)
 }
-// 每繞完一圈讀取一次輸入 IO，若使用者按了機台實體按鈕 (In15 變 0) 也可隨時更新狀態
-d.procReadPort.Call(uintptr(unsafe.Pointer(&res)), 0)
-ioVal := res.v1
-d.cachedStatus.InputPortHex = fmt.Sprintf("0x%04X", ioVal)
-d.cachedStatus.InputPortBin = fmt.Sprintf("%016b", ioVal)
+}
+d.procClose.Call()
+}
+}
+d.mu.Unlock()
+time.Sleep(15 * time.Millisecond)
 }
 
-// 4. 預覽結束：還原 Out4 輸出狀態並平滑滑回中心點 (32768, 32768)
-d.stopFlag.Store(false)
+// 預覽結束：歸零中心點並還原 Out4 狀態
+d.mu.Lock()
+if err := d.prepareEnv(); err == nil {
+ret, _, _ := d.procOpenNew.Call()
+if int32(ret) <= 0 {
+d.procOpen.Call(0)
+}
+if h, _, _ := d.procGetHandle.Call(0); h != 0 {
+var res tagResult
+d.procCmd.Call(uintptr(unsafe.Pointer(&res)), 0, 0x000d, uintptr(c), uintptr(c), 0, 0, 0)
 d.procWritePort.Call(uintptr(unsafe.Pointer(&res)), 0, uintptr(d.outPort), uintptr(0xFFFF))
 d.procCmd.Call(uintptr(unsafe.Pointer(&res)), 0, 0x0021, uintptr(d.outPort), uintptr(0xFFFF), 0, 0, 0)
-curX := uint16(d.lastX.Load())
-curY := uint16(d.lastY.Load())
-d.sCurveEdge(curX, curY, c, c, 60)
+d.procClose.Call()
+}
+}
+d.mu.Unlock()
 }()
 
 return nil

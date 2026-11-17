@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>JHS 雷射打標設備 Web 監控中心 (持續預覽修復版)</title>
+  <title>JHS 雷射打標設備 Web 監控中心 (穩定振鏡控制版)</title>
   <style>
     :root { --bg: #0f172a; --card: #1e293b; --text: #f8fafc; --muted: #94a3b8; --ok: #22c55e; --warn: #f59e0b; --err: #ef4444; --accent: #38bdf8; }
     body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; }
@@ -36,14 +36,14 @@
     .btn-sm { padding: 6px 12px; font-size: 12.5px; border-radius: 6px; }
     .preview-banner { display: none; margin-top: 10px; padding: 10px 12px; border-radius: 8px; background: rgba(239,68,68,0.18); border: 1px solid var(--err); color: #fca5a5; justify-content: space-between; align-items: center; font-size: 13.5px; font-weight: 600; }
     input[type="number"], select { background: #0f172a; border: 1px solid #334155; color: var(--text); padding: 6px 8px; border-radius: 6px; }
-    input[type="number"] { width: 62px; }
+    input[type="number"] { width: 65px; }
   </style>
 </head>
 <body>
   <div class="container">
     <header>
       <div>
-        <h1 style="margin:0; font-size:22px;">JHS 雷射打標設備監控面板 <span style="font-size:13px; color:var(--ok);">[持續預覽獨佔連線修復版]</span></h1>
+        <h1 style="margin:0; font-size:22px;">JHS 雷射打標設備監控面板 <span style="font-size:13px; color:var(--ok);">[振鏡 8ms 穩定控制修復版]</span></h1>
         <small id="platform" style="color:var(--muted);">載入中...</small>
       </div>
       <div style="display:flex; gap:12px; align-items:center;">
@@ -90,31 +90,32 @@
 
       <div class="card">
         <h3>
-          <span>振鏡平滑控制與持續預覽對位 (連動 Out4)</span>
+          <span>振鏡定位控制與紅光正方形預覽</span>
           <span id="previewBadge" class="badge ok" style="font-size:12px; padding:3px 10px;">待機中</span>
         </h3>
         <div class="kv"><span>標刻緩衝區 / 振鏡座標</span><span id="galvoXY">-</span></div>
         <div style="margin-top:8px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
           X: <input type="number" id="inputX" value="32768" min="0" max="65535">
           Y: <input type="number" id="inputY" value="32768" min="0" max="65535">
-          <button class="btn-sm" onclick="moveGalvo()">平滑移動</button>
-          <button class="btn-sm" onclick="resetCenter()" style="background:#475569; color:#fff;">歸零中心</button>
+          <button class="btn-sm" onclick="moveGalvo()">移動振鏡 (0x000D)</button>
+          <button class="btn-sm" onclick="resetCenter()" style="background:#475569; color:#fff;">歸零中心 (32768)</button>
         </div>
 
         <div style="margin-top:12px; padding-top:10px; border-top:1px dashed #334155;">
           <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px; font-size:13px;">
-            邊長: <input type="number" id="previewSizeMM" value="25" min="2" max="90" style="width:48px;"> mm
-            時間: <input type="number" id="previewTimeout" value="30" min="5" max="120" style="width:48px;"> 秒
-            速度/聲音:
-            <select id="smoothSteps">
-              <option value="60">清晰高速框 (60步/邊)</option>
-              <option value="120" selected>靜音平衡 (120步/邊)</option>
-              <option value="240">超柔順慢速 (240步/邊)</option>
+            邊長: <input type="number" id="previewSizeMM" value="30" min="5" max="90" style="width:48px;"> mm
+            步進間隔:
+            <select id="stepDelayMs">
+              <option value="5">快速 (5ms/步)</option>
+              <option value="8" selected>穩定柔和 (8ms/步 - 推薦)</option>
+              <option value="15">慢速安靜 (15ms/步)</option>
             </select>
+            時間: <input type="number" id="previewTimeout" value="30" min="5" max="120" style="width:45px;"> 秒
           </div>
           <div style="display:flex; gap:8px; flex-wrap:wrap;">
-            <button class="btn-sm" onclick="startContinuousPreview()" style="background:var(--ok); color:#0f172a; flex:1;">▶ 啟動 30 秒持續預覽 (雙手對位)</button>
-            <button class="btn-sm" onclick="stopContinuousPreview()" style="background:var(--err); color:#fff; flex:1;">■ 立即停止預覽 (歸零)</button>
+            <button class="btn-sm" onclick="runSinglePreview()" style="background:var(--warn); color:#0f172a;">單次預覽 (3圈)</button>
+            <button class="btn-sm" onclick="startContinuousPreview()" style="background:var(--ok); color:#0f172a; flex:1;">▶ 啟動 30 秒持續預覽</button>
+            <button class="btn-sm" onclick="stopContinuousPreview()" style="background:var(--err); color:#fff;">■ 停止</button>
           </div>
           <div id="previewBanner" class="preview-banner">
             <span>● 紅光預覽持續掃描中... 自動停止倒數：<b id="remainSec" style="font-size:16px; color:#fff;">30</b> 秒</span>
@@ -318,14 +319,25 @@
       moveGalvo();
     }
 
+    async function runSinglePreview() {
+      const sizeMM = parseFloat(document.getElementById('previewSizeMM').value) || 30;
+      const stepDelayMs = parseInt(document.getElementById('stepDelayMs').value, 10) || 8;
+      await fetch('/api/redlight', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({SizeMM: sizeMM, StepDelayMs: stepDelayMs})
+      });
+      fetchStatus();
+    }
+
     async function startContinuousPreview() {
-      const sizeMM = parseFloat(document.getElementById('previewSizeMM').value) || 25;
-      const smoothSteps = parseInt(document.getElementById('smoothSteps').value, 10) || 120;
+      const sizeMM = parseFloat(document.getElementById('previewSizeMM').value) || 30;
+      const stepDelayMs = parseInt(document.getElementById('stepDelayMs').value, 10) || 8;
       const timeoutSec = parseInt(document.getElementById('previewTimeout').value, 10) || 30;
       await fetch('/api/preview/start', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({SizeMM: sizeMM, SmoothSteps: smoothSteps, TimeoutSec: timeoutSec})
+        body: JSON.stringify({SizeMM: sizeMM, StepDelayMs: stepDelayMs, TimeoutSec: timeoutSec})
       });
       fetchStatus();
     }

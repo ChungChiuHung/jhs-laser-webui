@@ -77,7 +77,11 @@ d.galvoY = y
 return nil
 }
 
-func (d *SimulatedJczDriver) StartContinuousPreview(sizeMM float64, smoothSteps int, timeoutSec int) error {
+func (d *SimulatedJczDriver) RedLightPreview(sizeMM float64, stepDelayMs int) error {
+return nil
+}
+
+func (d *SimulatedJczDriver) StartContinuousPreview(sizeMM float64, stepDelayMs int, timeoutSec int) error {
 d.mu.Lock()
 defer d.mu.Unlock()
 if timeoutSec <= 0 {
