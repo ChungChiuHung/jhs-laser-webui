@@ -799,7 +799,8 @@ d.lastY.Store(32768)
 
 return nil
 }
-// ExecuteQRCodeMark 產生合併閉合輪廓 QRCode 並透過多 Buffer FIFO 分頁串流直接執行 F2 雷射雕刻 (含外輪廓與平行填充線 Hatch)
+
+// ExecuteQRCodeMark 產生合併閉合輪廓 QRCode 並透過多 Buffer FIFO 分頁串流直接執行 F2 雷射雕刻
 func (d *WindowsJczDriver) ExecuteQRCodeMark(req QRVectorRequest) (QRVectorResponse, error) {
 vec := GenerateQRVector(req)
 if !vec.OK {
@@ -853,7 +854,7 @@ poly   uint16
 }
 var items []cmdItem
 
-// 1. 加入所有合併閉合輪廓外框 (Outer Contours & Holes)
+// 1. 加入所有合併閉合輪廓外框
 for _, poly := range vec.ContoursMM {
 if len(poly) < 3 {
 continue
@@ -867,16 +868,15 @@ items = append(items, cmdItem{isMark: true, x: nx, y: ny, poly: 0})
 items = append(items, cmdItem{isMark: true, x: x0, y: y0, poly: 0})
 }
 
-// 2. 若設定填充間距 (HatchStepMM > 0)，為暗模組加入雙向弓字形 (Bidirectional) 平行填充線提高對比度
+// 2. 若設定填充間距 (HatchStepMM > 0)，為暗模組加入雙向弓字形平行填充線
 hatchStep := req.HatchStepMM
 if hatchStep > 0 && hatchStep < 0.02 {
 hatchStep = 0.02
 }
 if hatchStep > 0 {
-lvl, _ := parseECC(req.ECC)
-code, err := qr.Encode(strings.TrimSpace(req.Text), lvl)
+mat, _, err := encodePureQR(strings.TrimSpace(req.Text), req.ECC)
 if err == nil {
-n := code.Size
+n := mat.size
 m := vec.ModuleMM
 q := float64(vec.QuietZone) * m
 linesPerMod := int(math.Max(1, math.Round(m/hatchStep)))
@@ -887,12 +887,12 @@ yTop := q + (float64(r)+(float64(sub)+0.5)/float64(linesPerMod))*m
 yPhys := (halfOverall - yTop) * scaleY
 c := 0
 for c < n {
-if !code.Black(c, r) {
+if !mat.modules[r][c] {
 c++
 continue
 }
 cEnd := c
-for cEnd+1 < n && code.Black(cEnd+1, r) {
+for cEnd+1 < n && mat.modules[r][cEnd+1] {
 cEnd++
 }
 xL := (q + float64(c)*m - halfOverall) * scaleX
@@ -917,7 +917,6 @@ dirFlip = !dirFlip
 var res tagResult
 cardID := uintptr(0)
 
-// 啟動 F2 雷射序列
 d.procWritePort.Call(uintptr(unsafe.Pointer(&res)), cardID, 0x0000, 0)
 d.procResetList.Call(uintptr(unsafe.Pointer(&res)), cardID)
 d.procGotoXY.Call(uintptr(unsafe.Pointer(&res)), cardID, 0x8001, 0x8001)
@@ -937,7 +936,7 @@ slot := 0
 if firstPacket {
 buf.words[0*6+0] = 0x8051
 buf.words[1*6+0] = 0x8004
-buf.words[1*6+1] = 800 // MO 預熱 8ms
+buf.words[1*6+1] = 800
 buf.words[2*6+0] = 0x801b
 buf.words[2*6+1] = 1000
 buf.words[3*6+0] = 0x8012
@@ -957,7 +956,6 @@ buf.words[9*6+1] = 10
 slot = 10
 }
 
-// 若為最後一包則預留 2 個槽位做收尾回中心點
 maxSlot := 256
 if total-idx <= (254 - slot) {
 maxSlot = 254
@@ -985,7 +983,6 @@ slot++
 idx++
 }
 
-// 所有指令皆已裝入最後一包時，補上收尾延時與回中心點 (0x8000, 0x8000)
 if idx >= total && slot <= 254 {
 buf.words[slot*6+0] = 0x8004
 buf.words[slot*6+1] = 40
@@ -1014,10 +1011,8 @@ d.procWriteCmdBuf.Call(uintptr(unsafe.Pointer(&res)), cardID, uintptr(unsafe.Poi
 }
 }
 
-// 等待最後一批指令跑完
 time.Sleep(220 * time.Millisecond)
 
-// 安全收尾序列
 d.procSetCtrlMode.Call(uintptr(unsafe.Pointer(&res)), cardID, 1)
 d.procWritePort.Call(uintptr(unsafe.Pointer(&res)), cardID, 0x0000, 0)
 d.procSetStandby.Call(uintptr(unsafe.Pointer(&res)), cardID, 2000, 20, 1)
