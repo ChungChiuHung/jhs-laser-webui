@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>硬體 I/O 診斷 — JHS Laser Studio</title>
+  <link rel="stylesheet" href="/morandi.css">
+  <style>
+    .io-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 8px; }
+    .pin { background: var(--bg-input); border: 1px solid var(--border-subtle); border-radius: 8px; padding: 8px 4px; text-align: center; font-family: var(--font-mono); font-size: 12px; }
+    .pin.on { border-color: var(--morandi-sand); background: var(--morandi-sand-soft); color: #DFB890; }
+    .pin.hi { border-color: var(--morandi-sage); background: var(--morandi-sage-soft); color: #8EC2AE; }
+    .spec-row { display: flex; justify-content: space-between; padding: 8px 12px; background: var(--bg-input); border-radius: 8px; font-size: 13px; margin-bottom: 8px; }
+  </style>
+</head>
+<body>
+  <div class="focused-shell">
+    <nav class="nav-header">
+      <div class="nav-tabs">
+        <a href="/" class="nav-tab">1. 基礎圖形雕刻</a>
+        <a href="/qrcode.html" class="nav-tab">2. QRCode 產生與打標</a>
+        <a href="/svg_studio.html" class="nav-tab">3. SVG / 圖片轉向量打標</a>
+        <a href="/diagnostics.html" class="nav-tab active">4. 硬體 I/O 診斷</a>
+      </div>
+      <span id="connPill" class="pill pill-sage">診斷模式</span>
+    </nav>
+
+    <section class="focus-card active">
+      <h2 class="card-heading">控制卡狀態與出廠光學參數 (markcfg7)</h2>
+      <div>
+        <div class="spec-row"><span>裝置 Handle / 狀態碼</span><span id="sHandle" style="font-family:var(--font-mono);">-</span></div>
+        <div class="spec-row"><span>韌體版本 / 板卡序號</span><span id="sFw" style="font-family:var(--font-mono);">-</span></div>
+        <div class="spec-row"><span>光學場鏡與比例校正</span><span id="sField" style="font-family:var(--font-mono);">-</span></div>
+        <div class="spec-row"><span>歷史累計打標件數</span><span id="sParts" style="font-family:var(--font-mono);">-</span></div>
+      </div>
+
+      <h3 style="margin:8px 0 0; font-size:15px;">16 路輸出埠控制 (點擊切換電位)</h3>
+      <div class="io-grid" id="outGrid"></div>
+
+      <h3 style="margin:8px 0 0; font-size:15px;">16 路輸入埠即時狀態 (In0/In2=解鎖風扇 · In15=啟動按鈕)</h3>
+      <div class="io-grid" id="inGrid"></div>
+    </section>
+  </div>
+
+  <script>
+    async function loadDiag() {
+      const res = await fetch('/api/status?t=' + Date.now());
+      const d = await res.json();
+      document.getElementById('sHandle').textContent = d.handle_hex + ' | ' + d.state_hex;
+      document.getElementById('sFw').textContent = d.firmware_ver + ' | SN: ' + d.serial_no;
+      document.getElementById('sField').textContent = d.field_size_mm;
+      document.getElementById('sParts').textContent = d.total_parts + ' pcs';
+
+      const outBin = d.output_port_bin || '0000000000010000';
+      const inBin = d.input_port_bin || '0000000000000000';
+
+      const og = document.getElementById('outGrid');
+      og.innerHTML = '';
+      for (let i = 15; i >= 0; i--) {
+        const bit = outBin[15 - i];
+        const div = document.createElement('div');
+        div.className = 'pin ' + (bit === '1' ? 'on' : '');
+        div.style.cursor = 'pointer';
+        div.onclick = async () => {
+          const mask = 1 << i;
+          await fetch('/api/writeport', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mask, val: bit === '1' ? 0 : mask }) });
+          loadDiag();
+        };
+        div.innerHTML = '<b>O' + i + '</b><div style="margin-top:4px;">' + bit + '</div>';
+        og.appendChild(div);
+      }
+
+      const ig = document.getElementById('inGrid');
+      ig.innerHTML = '';
+      for (let i = 15; i >= 0; i--) {
+        const bit = inBin[15 - i];
+        const div = document.createElement('div');
+        div.className = 'pin ' + (bit === '1' ? 'hi' : '');
+        div.innerHTML = '<b>I' + i + '</b><div style="margin-top:4px;">' + bit + '</div>';
+        ig.appendChild(div);
+      }
+    }
+    setInterval(loadDiag, 1500);
+    loadDiag();
+  </script>
+</body>
+</html>

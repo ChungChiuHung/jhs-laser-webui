@@ -1,0 +1,294 @@
+:root {
+  --bg-base: #161A1E;
+  --bg-surface: #1F242B;
+  --bg-elevated: #272D36;
+  --bg-input: #14181C;
+  --border-subtle: rgba(168, 182, 196, 0.14);
+  --border-strong: rgba(168, 182, 196, 0.28);
+
+  --text-primary: #E6EAEF;
+  --text-secondary: #98A3AE;
+  --text-muted: #68737E;
+
+  --morandi-blue: #6C8EAD;
+  --morandi-blue-soft: rgba(108, 142, 173, 0.16);
+  --morandi-sage: #6B9E8A;
+  --morandi-sage-soft: rgba(107, 158, 138, 0.16);
+  --morandi-sand: #C89B6E;
+  --morandi-sand-soft: rgba(200, 155, 110, 0.16);
+  --morandi-terra: #C86D6D;
+  --morandi-terra-soft: rgba(200, 109, 109, 0.16);
+
+  --radius-lg: 16px;
+  --radius-md: 12px;
+  --radius-sm: 8px;
+  --font-mono: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft JhengHei', sans-serif;
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+  margin: 0;
+  padding: 24px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.focused-shell {
+  max-width: 820px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* 極簡頂部導覽與分頁膠囊 */
+.nav-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px 18px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+}
+
+.nav-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.nav-tab {
+  padding: 7px 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: all 0.15s;
+  border: 1px solid transparent;
+}
+
+.nav-tab:hover {
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+}
+
+.nav-tab.active {
+  background: var(--morandi-blue-soft);
+  color: #A7C4DF;
+  border-color: rgba(108, 142, 173, 0.35);
+}
+
+/* 安全狀態精簡提示條 */
+.safety-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 16px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 11px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.pill-sage { background: var(--morandi-sage-soft); color: #8EC2AE; }
+.pill-sand { background: var(--morandi-sand-soft); color: #DFB890; }
+.pill-terra { background: var(--morandi-terra-soft); color: #E29494; }
+
+/* 步驟進度指示器 (Step 1 -> Step 2 -> Step 3) */
+.stepper {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.step-btn {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.15s;
+  color: var(--text-secondary);
+}
+
+.step-btn:hover { border-color: var(--border-strong); }
+
+.step-btn.active {
+  background: var(--bg-elevated);
+  border-color: var(--morandi-blue);
+  color: var(--text-primary);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+}
+
+.step-num {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  color: var(--morandi-blue);
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+
+.step-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* 單一焦點卡片 */
+.focus-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: 28px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
+  display: none;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.focus-card.active { display: flex; }
+
+.card-heading {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.card-desc {
+  margin: 4px 0 0;
+  font-size: 13.5px;
+  color: var(--text-secondary);
+}
+
+/* 寬鬆表單控制項 */
+.control-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px;
+}
+
+.input-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.input-box label {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.input-box input, .input-box select {
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 600;
+  outline: none;
+  width: 100%;
+}
+
+.input-box input:focus, .input-box select:focus {
+  border-color: var(--morandi-blue);
+}
+
+/* 按鈕系統 */
+.action-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.btn {
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 10px 18px;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #F4F7FA;
+  text-decoration: none;
+}
+
+.btn:hover { filter: brightness(1.08); transform: translateY(-1px); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+.btn-blue { background: var(--morandi-blue); }
+.btn-sage { background: var(--morandi-sage); }
+.btn-sand { background: var(--morandi-sand); color: #161A1E; }
+.btn-terra { background: var(--morandi-terra); }
+.btn-ghost { background: var(--bg-elevated); border-color: var(--border-subtle); color: var(--text-primary); }
+.btn-lg { padding: 13px 24px; font-size: 14.5px; }
+
+/* 折疊進階選項 (減少日常視覺干擾) */
+details.advanced-fold {
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+}
+
+details.advanced-fold summary {
+  cursor: pointer;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  font-weight: 600;
+  user-select: none;
+}
+
+details.advanced-fold[open] summary {
+  margin-bottom: 12px;
+  color: var(--text-primary);
+}
+
+.preview-canvas-box {
+  background: #F4F6F8;
+  border-radius: var(--radius-md);
+  padding: 20px;
+  min-height: 220px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: #1F242B;
+}
+
+.preview-canvas-box svg {
+  max-width: 190px;
+  max-height: 190px;
+  width: auto;
+  height: auto;
+}

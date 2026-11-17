@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QRCode 產生與打標 — JHS Laser Studio</title>
+  <link rel="stylesheet" href="/morandi.css">
+</head>
+<body>
+  <div class="focused-shell">
+    <nav class="nav-header">
+      <div class="nav-tabs">
+        <a href="/" class="nav-tab">1. 基礎圖形雕刻</a>
+        <a href="/qrcode.html" class="nav-tab active">2. QRCode 產生與打標</a>
+        <a href="/svg_studio.html" class="nav-tab">3. SVG / 圖片轉向量打標</a>
+        <a href="/diagnostics.html" class="nav-tab">4. 硬體 I/O 診斷</a>
+      </div>
+      <span id="connPill" class="pill pill-sage">就緒</span>
+    </nav>
+
+    <div class="stepper">
+      <button class="step-btn active" id="tabBtn1" onclick="goStep(1)">
+        <div class="step-num">Step 01</div>
+        <div class="step-title">輸入內容與預覽長寬</div>
+      </button>
+      <button class="step-btn" id="tabBtn2" onclick="goStep(2)">
+        <div class="step-num">Step 02</div>
+        <div class="step-title">F1 紅光對位 / 匯出檔案</div>
+      </button>
+      <button class="step-btn" id="tabBtn3" onclick="goStep(3)">
+        <div class="step-num">Step 03</div>
+        <div class="step-title">F2 直接雷射打標</div>
+      </button>
+    </div>
+
+    <!-- Step 1 -->
+    <section class="focus-card active" id="stepCard1">
+      <div>
+        <h2 class="card-heading">第一步：輸入文字或 URL 並預覽物理長寬</h2>
+        <p class="card-desc">自動生成合併閉合輪廓向量，即時計算總寬度與單點模組尺寸。</p>
+      </div>
+
+      <div class="input-box">
+        <label>編碼內容 (文字 / 序號 / 網址)</label>
+        <input type="text" id="qrText" value="https://jhs-laser.local/SN-2026001" oninput="refreshQR()">
+      </div>
+
+      <div class="control-grid">
+        <div class="input-box">
+          <label>目標實體寬度 (mm)</label>
+          <input type="number" id="qrSizeMM" value="20" min="5" max="90" step="0.5" oninput="refreshQR()">
+        </div>
+        <div class="input-box">
+          <label>容錯等級 (ECC)</label>
+          <select id="qrECC" onchange="refreshQR()">
+            <option value="L">L — 低 (7%)</option>
+            <option value="M" selected>M — 中 (15%)</option>
+            <option value="Q">Q — 較高 (25%)</option>
+            <option value="H">H — 高 (30%)</option>
+          </select>
+        </div>
+      </div>
+
+      <details class="advanced-fold">
+        <summary>尺寸基準與白邊設定 (預設含 2 格靜音區)</summary>
+        <div class="control-grid">
+          <div class="input-box">
+            <label>尺寸計算基準</label>
+            <select id="qrBasis" onchange="refreshQR()">
+              <option value="total" selected>總外框寬度 (含白邊)</option>
+              <option value="code">僅核心碼區寬度</option>
+            </select>
+          </div>
+          <div class="input-box">
+            <label>四周靜音區白邊 (模組數)</label>
+            <input type="number" id="qrQuiet" value="2" min="0" max="8" oninput="refreshQR()">
+          </div>
+        </div>
+      </details>
+
+      <div class="preview-canvas-box">
+        <div id="qrPreviewStage"></div>
+        <div id="qrMetaText" style="font-family:var(--font-mono); font-size:12.5px; font-weight:600;">計算中...</div>
+      </div>
+
+      <div class="action-bar">
+        <span></span>
+        <button class="btn btn-blue btn-lg" onclick="goStep(2)">下一步：F1 紅光對位或下載向量檔 →</button>
+      </div>
+    </section>
+
+    <!-- Step 2 -->
+    <section class="focus-card" id="stepCard2">
+      <div>
+        <h2 class="card-heading">第二步：F1 紅光框對位或匯出 SVG / DXF 向量檔</h2>
+        <p class="card-desc">可使用紅光在工件上確認 QRCode 外框位置，或下載標準 CAD/雷射向量檔。</p>
+      </div>
+
+      <div style="background:var(--bg-input); padding:18px; border-radius:var(--radius-md); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+        <div>
+          <div style="font-size:12px; color:var(--text-secondary);">實體外框範圍</div>
+          <div id="qrFrameLabel" style="font-size:16px; font-weight:700; font-family:var(--font-mono); margin-top:4px;">20.0 × 20.0 mm</div>
+        </div>
+        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+          <button class="btn btn-sage" onclick="previewQRFrame()">▶ 啟動 F1 紅光外框</button>
+          <button class="btn btn-sand" onclick="stopF1()">■ 停止紅光</button>
+          <button class="btn btn-ghost" onclick="dlQR('svg')">下載 SVG</button>
+          <button class="btn btn-ghost" onclick="dlQR('dxf')">下載 DXF</button>
+        </div>
+      </div>
+
+      <div class="action-bar">
+        <button class="btn btn-ghost" onclick="goStep(1)">← 修改內容</button>
+        <button class="btn btn-blue btn-lg" onclick="goStep(3)">下一步：F2 雷射雕刻 QRCode →</button>
+      </div>
+    </section>
+
+    <!-- Step 3 -->
+    <section class="focus-card" id="stepCard3">
+      <div>
+        <h2 class="card-heading">第三步：設定填充密度與功率並執行雕刻</h2>
+        <p class="card-desc">建議設定 0.08 mm 內部填充線距，可獲得高對比、易掃描的深色二維碼。</p>
+      </div>
+
+      <div class="control-grid">
+        <div class="input-box">
+          <label>內部填充線距 (mm，0=僅外框)</label>
+          <input type="number" id="qrHatch" value="0.08" min="0" max="0.5" step="0.01">
+        </div>
+        <div class="input-box">
+          <label>雷射功率 (%)</label>
+          <input type="number" id="qrPower" value="35" min="1" max="100" style="color:#DFB890;">
+        </div>
+        <div class="input-box">
+          <label>雕刻速度</label>
+          <input type="number" id="qrSpeed" value="450" min="80" max="3000" step="10">
+        </div>
+      </div>
+
+      <div class="action-bar">
+        <button class="btn btn-ghost" onclick="goStep(2)">← 返回對位</button>
+        <button class="btn btn-terra btn-lg" id="qrMarkBtn" onclick="markQRNow()">⚡ 執行 QRCode 雷射打標 (F2)</button>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    let qrData = null;
+
+    function goStep(n) {
+      for (let i = 1; i <= 3; i++) {
+        document.getElementById('tabBtn' + i).classList.toggle('active', i === n);
+        document.getElementById('stepCard' + i).classList.toggle('active', i === n);
+      }
+      if (n === 2 && qrData) {
+        document.getElementById('qrFrameLabel').textContent = qrData.overall_mm + ' × ' + qrData.overall_mm + ' mm';
+      }
+    }
+
+    async function refreshQR() {
+      const res = await fetch('/api/qrcode/vector', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: document.getElementById('qrText').value,
+          size_mm: parseFloat(document.getElementById('qrSizeMM').value) || 20,
+          size_basis: document.getElementById('qrBasis').value,
+          quiet_zone: parseInt(document.getElementById('qrQuiet').value, 10),
+          ecc: document.getElementById('qrECC').value
+        })
+      });
+      const d = await res.json();
+      if (!d.ok) {
+        document.getElementById('qrMetaText').textContent = '⚠ ' + d.error;
+        return;
+      }
+      qrData = d;
+      document.getElementById('qrPreviewStage').innerHTML = d.svg;
+      document.getElementById('qrMetaText').textContent =
+        d.module_count + '×' + d.module_count + ' 模組 · 實際長寬 ' + d.overall_mm + ' × ' + d.overall_mm + ' mm (單點 ' + d.module_mm + ' mm)';
+    }
+
+    async function previewQRFrame() {
+      if (!qrData) return;
+      await fetch('/api/preview/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ Shape: 'square', SizeMM: qrData.overall_mm, StepDelayMs: 2090, TimeoutSec: 30 })
+      });
+    }
+
+    async function stopF1() {
+      await fetch('/api/preview/stop', { method: 'POST' });
+    }
+
+    function dlQR(ext) {
+      const text = encodeURIComponent(document.getElementById('qrText').value);
+      const size = parseFloat(document.getElementById('qrSizeMM').value) || 20;
+      const basis = document.getElementById('qrBasis').value;
+      const quiet = parseInt(document.getElementById('qrQuiet').value, 10);
+      const ecc = document.getElementById('qrECC').value;
+      window.open('/api/qrcode/' + ext + '?text=' + text + '&size_mm=' + size + '&size_basis=' + basis + '&quiet_zone=' + quiet + '&ecc=' + ecc, '_blank');
+    }
+
+    async function markQRNow() {
+      const btn = document.getElementById('qrMarkBtn');
+      btn.disabled = true;
+      btn.textContent = '⚡ 雷射雕刻中 (MO=1)...';
+      await fetch('/api/qrcode/mark', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: document.getElementById('qrText').value,
+          size_mm: parseFloat(document.getElementById('qrSizeMM').value) || 20,
+          size_basis: document.getElementById('qrBasis').value,
+          quiet_zone: parseInt(document.getElementById('qrQuiet').value, 10),
+          ecc: document.getElementById('qrECC').value,
+          hatch_step_mm: parseFloat(document.getElementById('qrHatch').value) || 0,
+          power_pct: parseFloat(document.getElementById('qrPower').value) || 35,
+          speed_word: parseInt(document.getElementById('qrSpeed').value, 10) || 450
+        })
+      });
+      btn.disabled = false;
+      btn.textContent = '⚡ 執行 QRCode 雷射打標 (F2)';
+    }
+
+    refreshQR();
+  </script>
+</body>
+</html>
