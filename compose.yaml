@@ -1,0 +1,41 @@
+### jhs-laser-webui-candidate（雷射打標與追溯 QRCode 服務；TEST / DEV 專用）
+### 與 live jhs-laser-webui（/opt/docker/services/laser-webui，Production 使用）完全分開：不同 project / container / port。
+### 由 db-260408_test 指向 http://jhs-laser-webui-candidate:8080。
+
+name: laser-webui-candidate
+
+services:
+  laser-webui-candidate:
+    build:
+      context: .
+    image: jhs-laser-webui:candidate
+    container_name: jhs-laser-webui-candidate
+    restart: unless-stopped
+    labels:
+      com.johesheng.purpose: "laser-webui-candidate (TEST & DEV only)"
+    command: ["-host", "0.0.0.0", "-port", "8080", "-dir", "/app"]
+    ports:
+      - "127.0.0.1:18003:8080"
+    volumes:
+      - ./plug:/app/plug:ro
+      - ./data:/app/data   # 打標佇列持久化 (queue.json)
+    environment:
+      - TZ=Asia/Taipei
+      # 若採用遠端工控盒 Edge HTTP Proxy 轉發模式，請取消下方註解並填入工控盒位址：
+      # - LASER_EDGE_URL=http://192.168.68.xxx:8080
+    # 若實體雷射打標機 (BJJCZ USBLMCV4, VID=0x9588, PID=0x9899) 直接插在此伺服器 USB 埠，請取消下方註解：
+    # devices:
+    #   - "/dev/bus/usb:/dev/bus/usb"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:8080/api/status"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    networks:
+      - default
+      - jhs-integration
+
+networks:
+  jhs-integration:
+    external: true

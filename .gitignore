@@ -24,3 +24,4 @@ ezcad_*.txt
 .idea/
 .DS_Store
 Thumbs.db
+data/

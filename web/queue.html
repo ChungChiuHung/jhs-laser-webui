@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>溯源打標工作台 — JHS Laser</title>
+<link rel="stylesheet" href="/morandi.css">
+<style>
+  html, body { height: 100%; }
+  body { padding: 0; overflow: hidden; }
+  .wb { display: flex; flex-direction: column; height: 100dvh; }
+  .wb-nav { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: var(--bg-surface); border-bottom: 1px solid var(--border-subtle); }
+  .wb-nav a { color: var(--text-secondary); text-decoration: none; font-size: 13px; }
+  .wb-nav .grow { flex: 1; }
+  .wb-body { flex: 1; min-height: 0; display: flex; }
+  .pane { min-height: 0; display: flex; flex-direction: column; width: 100%; }
+  #paneMark { display: none; }
+  .view-mark #paneQueue { display: none; }
+  .view-mark #paneMark { display: flex; }
+
+  .bar { display: flex; gap: 8px; padding: 10px 12px; align-items: center; flex-wrap: wrap; }
+  .bar input[type=search] { flex: 1; min-width: 140px; background: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 12px; font-size: 16px; }
+  .tabs { display: flex; gap: 8px; padding: 0 12px 8px; }
+  .tab { flex: 1; padding: 12px 6px; border-radius: var(--radius-md); border: 1px solid var(--border-strong); background: var(--bg-surface); color: var(--text-secondary); font-size: 15px; font-weight: 600; cursor: pointer; }
+  .tab.on { background: var(--morandi-blue-soft); color: var(--text-primary); border-color: var(--morandi-blue); }
+  .list { flex: 1; overflow-y: auto; padding: 4px 12px 16px; display: flex; flex-direction: column; gap: 10px; -webkit-overflow-scrolling: touch; }
+  .card { background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 14px; cursor: pointer; }
+  .card:active { background: var(--bg-elevated); }
+  .card.sel { border-color: var(--morandi-sage); box-shadow: 0 0 0 1px var(--morandi-sage) inset; }
+  .card .lot { font-size: 20px; font-weight: 700; font-family: var(--font-mono); word-break: break-all; }
+  .card .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .card .prod { margin-top: 6px; font-size: 15px; }
+  .card .cust { color: var(--text-secondary); font-size: 14px; }
+  .card .url { margin-top: 6px; font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tag { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; background: var(--morandi-sand-soft); color: #DFB890; margin-right: 6px; }
+  .badge { padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .b-pending { background: var(--morandi-blue-soft); color: #9DB8D1; }
+  .b-active { background: var(--morandi-sage-soft); color: #8EC2AE; }
+  .b-done { background: rgba(152,163,174,.16); color: var(--text-secondary); }
+  .b-failed { background: var(--morandi-terra-soft); color: #E29494; }
+  .card .acts { margin-top: 10px; display: flex; gap: 8px; }
+  .mini { padding: 10px 14px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong); background: var(--bg-elevated); color: var(--text-primary); font-size: 14px; cursor: pointer; }
+  .empty { text-align: center; color: var(--text-muted); padding: 40px 0; }
+  .toolbar-foot { padding: 8px 12px; border-top: 1px solid var(--border-subtle); display: flex; justify-content: space-between; align-items: center; }
+
+  .mhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border-subtle); }
+  .back { padding: 12px 14px; border-radius: var(--radius-md); border: 1px solid var(--border-strong); background: var(--bg-surface); color: var(--text-primary); font-size: 15px; cursor: pointer; }
+  .sw { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text-secondary); }
+  .sw input { width: 22px; height: 22px; }
+  .mbody { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 12px; }
+  .info { background: var(--bg-surface); border: 1px solid var(--morandi-sand); border-radius: var(--radius-md); padding: 14px; }
+  .info .lot { font-size: 24px; font-weight: 800; font-family: var(--font-mono); word-break: break-all; }
+  .info .meta { color: var(--text-secondary); margin-top: 4px; }
+  .qrbox { background: #fff; border-radius: var(--radius-md); padding: 12px; text-align: center; }
+  .qrbox img { width: min(100%, 260px); image-rendering: crisp-edges; }
+  .qrmeta { text-align: center; color: var(--text-secondary); font-size: 14px; }
+  .qrmeta a { color: var(--morandi-blue); word-break: break-all; font-size: 12px; }
+  details.params { background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 10px 14px; }
+  details.params summary { cursor: pointer; font-size: 14px; color: var(--text-secondary); }
+  .pgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; }
+  .pgrid label { font-size: 12px; color: var(--text-muted); display: block; }
+  .pgrid input { width: 100%; background: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 10px; font-size: 16px; }
+  .actionbar { display: flex; flex-direction: column; gap: 10px; padding: 12px; padding-bottom: calc(12px + env(safe-area-inset-bottom)); background: var(--bg-surface); border-top: 1px solid var(--border-strong); }
+  .big { width: 100%; min-height: 64px; border-radius: var(--radius-md); font-size: 18px; font-weight: 700; cursor: pointer; border: 2px solid; }
+  .big:disabled { opacity: .55; cursor: not-allowed; }
+  .btn-red { background: rgba(200,155,110,.14); color: #E9C79F; border-color: var(--morandi-sand); }
+  .btn-red.live { background: rgba(200,109,109,.2); color: #F0A5A5; border-color: var(--morandi-terra); animation: breathe 1.4s ease-in-out infinite; }
+  .btn-go { background: var(--morandi-sage); color: #0F1613; border-color: var(--morandi-sage); }
+  @keyframes breathe { 0%,100% { box-shadow: 0 0 0 0 rgba(200,109,109,.55); } 50% { box-shadow: 0 0 18px 4px rgba(200,109,109,.55); } }
+  .placeholder { margin: auto; color: var(--text-muted); text-align: center; padding: 40px 12px; }
+
+  #toast { position: fixed; left: 50%; top: 16px; transform: translateX(-50%); z-index: 50; padding: 12px 18px; border-radius: var(--radius-md); background: var(--bg-elevated); border: 1px solid var(--border-strong); max-width: 92vw; display: none; font-size: 15px; }
+  #toast.ok { border-color: var(--morandi-sage); } #toast.err { border-color: var(--morandi-terra); }
+
+  @media (min-width: 768px) {
+    .back { display: none; }
+    #paneQueue { width: 42%; border-right: 1px solid var(--border-subtle); }
+    #paneMark, .view-mark #paneMark { display: flex; width: 58%; }
+    .view-mark #paneQueue { display: flex; }
+  }
+</style>
+</head>
+<body>
+<div class="wb" id="wb">
+  <div class="wb-nav">
+    <a href="/">← 控制中心</a><span class="grow"></span>
+    <span id="conn" class="pill pill-terra">連線檢測中</span>
+  </div>
+  <div class="wb-body">
+    <!-- 第 1 頁：待打標佇列 -->
+    <section class="pane" id="paneQueue">
+      <div class="bar"><input type="search" id="q" placeholder="刷條碼或輸入批號 / 品名 / 客戶" autocomplete="off" inputmode="search"></div>
+      <div class="tabs">
+        <button class="tab on" id="tabP" onclick="setTab('pending')">待打標 (0)</button>
+        <button class="tab" id="tabD" onclick="setTab('done')">已完成 (0)</button>
+      </div>
+      <div class="list" id="list"></div>
+      <div class="toolbar-foot" id="foot" style="display:none">
+        <span style="font-size:13px;color:var(--text-muted)">已完成項目</span>
+        <button class="mini" onclick="clearDone()">清除所有已完成</button>
+      </div>
+    </section>
+
+    <!-- 第 2 頁：預覽與打標 -->
+    <section class="pane" id="paneMark">
+      <div class="mhead">
+        <button class="back" onclick="backToQueue()">← 返回待打標佇列</button>
+        <label class="sw"><input type="checkbox" id="autoNext" checked> 打標後自動跳下一筆</label>
+      </div>
+      <div class="mbody" id="mbody"><div class="placeholder">請從左側／第 1 頁選擇一筆待打標批號</div></div>
+      <div class="actionbar" id="actionbar" style="display:none">
+        <button class="big btn-red" id="btnPrev" onclick="togglePreview()">🔴 紅光定位預覽（確認打標區域）</button>
+        <button class="big btn-go" id="btnMark" onclick="doMark()">⚡ 開始雷射打標 (F2)</button>
+      </div>
+    </section>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const S = { items: [], tab: 'pending', filter: '', sel: null, qr: null, preview: false, marking: false, hw: {} };
+const STATUS_TXT = { pending: '待打標', active: '作業中', done: '已完成', failed: '失敗' };
+try { $('autoNext').checked = localStorage.getItem('jhs_autonext') !== '0'; } catch (e) {}
+$('autoNext').onchange = () => { try { localStorage.setItem('jhs_autonext', $('autoNext').checked ? '1' : '0'); } catch (e) {} };
+
+function toast(msg, kind) {
+  const t = $('toast'); t.textContent = msg; t.className = kind || 'ok'; t.style.display = 'block';
+  clearTimeout(toast.t); toast.t = setTimeout(() => t.style.display = 'none', 3500);
+}
+async function api(path, body) {
+  const opt = body === undefined ? {} : { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) };
+  const r = await fetch(path, opt);
+  const j = await r.json().catch(() => ({ ok: false, error: 'HTTP ' + r.status }));
+  if (!r.ok && j.ok !== false) j.ok = false;
+  return j;
+}
+
+async function refresh() {
+  if (S.marking) return;
+  const j = await api('/api/queue').catch(() => null);
+  if (!j || !j.items) { $('conn').className = 'pill pill-terra'; $('conn').textContent = '服務離線'; return; }
+  S.items = j.items; S.hw = j.hardware || {};
+  S.preview = !!S.hw.preview_active && S.preview;
+  if (!S.hw.preview_active) S.preview = false;
+  const sim = S.hw.simulation;
+  $('conn').className = 'pill ' + (S.hw.connected ? (sim ? 'pill-sand' : 'pill-sage') : 'pill-terra');
+  $('conn').textContent = S.hw.connected ? (sim ? 'Simulation' : 'Online') : '雷射未連線';
+  $('tabP').textContent = `待打標 (${j.pending_count + j.active_count + (j.failed_count || 0)})`;
+  $('tabD').textContent = `已完成 (${j.done_count})`;
+  // 桌機首次載入：自動帶出伺服器端選中項目
+  if (!S.sel && j.selected && !refresh.init && window.matchMedia('(min-width:768px)').matches) await selectItem(j.selected.id, true);
+  refresh.init = true;
+  renderList(); renderPreviewBtn();
+}
+
+function visible() {
+  const f = S.filter.trim().toLowerCase();
+  return S.items.filter(it => (S.tab === 'done' ? it.status === 'done' : it.status !== 'done') &&
+    (!f || [it.lot_name, it.product_name, it.product_code, it.customer_name, it.material, it.token].some(v => (v || '').toLowerCase().includes(f))));
+}
+function renderList() {
+  const arr = visible();
+  $('foot').style.display = S.tab === 'done' && arr.length ? 'flex' : 'none';
+  if (!arr.length) { $('list').innerHTML = `<div class="empty">${S.filter ? '找不到符合的批號' : (S.tab === 'done' ? '尚無已完成項目' : '佇列是空的，請在 Odoo 批號清單派送')}</div>`; return; }
+  $('list').innerHTML = arr.map(it => `
+    <div class="card ${S.sel === it.id ? 'sel' : ''}" onclick="selectItem('${esc(it.id)}')">
+      <div class="row"><span class="lot">${esc(it.lot_name)}</span><span class="badge b-${it.status}">${STATUS_TXT[it.status] || it.status}</span></div>
+      <div class="prod">${esc(it.product_name)}</div>
+      <div class="cust">${esc(it.customer_name) || '—'}</div>
+      <div style="margin-top:8px">${it.material ? `<span class="tag">${esc(it.material)}</span>` : ''}<span class="tag">${esc(it.size_mm)} mm</span></div>
+      ${it.last_error ? `<div style="color:#E29494;font-size:13px;margin-top:6px">⚠ ${esc(it.last_error)}</div>` : ''}
+      <div class="url">${esc(it.trace_url)}</div>
+      ${it.status === 'done' ? `<div class="acts"><button class="mini" onclick="event.stopPropagation();requeue('${esc(it.id)}')">↺ 重新打標</button><button class="mini" onclick="event.stopPropagation();del('${esc(it.id)}')">🗑 刪除</button></div>` : ''}
+    </div>`).join('');
+}
+function setTab(t) { S.tab = t; $('tabP').classList.toggle('on', t === 'pending'); $('tabD').classList.toggle('on', t === 'done'); renderList(); }
+$('q').addEventListener('input', e => { S.filter = e.target.value; renderList(); });
+$('q').addEventListener('keydown', e => {   // 掃碼槍通常以 Enter 結尾：唯一符合即直接開啟
+  if (e.key !== 'Enter') return;
+  const a = visible(); if (a.length === 1) { selectItem(a[0].id); e.target.select(); }
+});
+
+async function selectItem(id, quiet) {
+  const cur = S.items.find(i => i.id === id);
+  if (cur && cur.status === 'done') { toast('此批號已完成；請按「重新打標」', 'err'); return; }
+  if (S.preview && S.sel !== id) await api('/api/queue/preview', { id: S.sel, action: 'stop' });
+  const j = await api('/api/queue/select', { id });
+  if (!j.ok) { toast(j.error || '選取失敗', 'err'); return; }
+  S.sel = id; S.preview = false; S.qr = j.qr;
+  S.items = S.items.map(i => i.id === id ? j.item : (i.status === 'active' ? { ...i, status: 'pending' } : i));
+  renderList(); renderMark(j.item);
+  if (!quiet) $('wb').classList.add('view-mark');
+}
+function backToQueue() {
+  if (S.preview) api('/api/queue/preview', { id: S.sel, action: 'stop' });
+  S.preview = false; renderPreviewBtn(); $('wb').classList.remove('view-mark'); refresh();
+}
+
+function renderMark(it) {
+  $('actionbar').style.display = 'flex';
+  const qr = S.qr || {};
+  $('mbody').innerHTML = `
+    <div class="info"><div class="lot">${esc(it.lot_name)}</div>
+      <div style="font-size:17px;margin-top:6px">${esc(it.product_name)}</div>
+      <div class="meta">客戶：${esc(it.customer_name) || '—'}　|　材質：<b style="color:#DFB890">${esc(it.material) || '—'}</b>${it.surface ? '　|　' + esc(it.surface) : ''}</div></div>
+    <div class="qrbox" id="qrbox">${qr.ok ? `<img alt="QR" src="data:image/svg+xml;utf8,${encodeURIComponent(qr.svg)}">` : esc(qr.error || '')}</div>
+    <div class="qrmeta"><span id="qrdim">${qr.ok ? `${qr.overall_mm} × ${qr.overall_mm} mm（${qr.module_count}×${qr.module_count} 模組）` : ''}</span><br>
+      <a href="${esc(it.trace_url)}" target="_blank" rel="noopener">${esc(it.trace_url)}</a></div>
+    <details class="params"><summary>快速參數：<span id="psum"></span>（點擊調整）</summary>
+      <div class="pgrid">
+        <div><label>尺寸 mm</label><input type="number" id="pSize" step="0.5" min="3" max="95" value="${it.size_mm}"></div>
+        <div><label>功率 %</label><input type="number" id="pPow" step="1" min="1" max="100" value="${it.power_pct}"></div>
+        <div><label>速度</label><input type="number" id="pSpd" step="10" min="1" value="${it.speed_word}"></div>
+        <div style="grid-column:1/-1"><label>填充線間距 mm</label><input type="number" id="pHat" step="0.01" min="0.005" value="${it.hatch_step_mm}"></div>
+      </div></details>`;
+  ['pSize','pPow','pSpd','pHat'].forEach(i => $(i).addEventListener('input', paramsChanged));
+  psum(); renderPreviewBtn();
+}
+const psum = () => { if ($('psum')) $('psum').textContent = `${$('pSize').value} mm · ${$('pPow').value}% · ${$('pSpd').value}`; };
+function params() { return { size_mm: +$('pSize').value, power_pct: +$('pPow').value, speed_word: +$('pSpd').value, hatch_step_mm: +$('pHat').value }; }
+let pTimer;
+function paramsChanged() {
+  psum(); clearTimeout(pTimer);
+  pTimer = setTimeout(async () => {
+    const it = S.items.find(i => i.id === S.sel); if (!it) return;
+    const p = params(); if (!(p.size_mm >= 3 && p.size_mm <= 95)) return;
+    const j = await api('/api/qrcode/vector?text=' + encodeURIComponent(it.trace_url || it.token || it.lot_name) + '&size_mm=' + p.size_mm);
+    if (j.ok) {
+      S.qr = j;
+      $('qrbox').innerHTML = `<img alt="QR" src="data:image/svg+xml;utf8,${encodeURIComponent(j.svg)}">`;
+      $('qrdim').textContent = `${j.overall_mm} × ${j.overall_mm} mm（${j.module_count}×${j.module_count} 模組）`;
+      if (S.preview) await api('/api/queue/preview', { id: S.sel, action: 'start', size_mm: p.size_mm });
+    }
+  }, 250);
+}
+
+function renderPreviewBtn() {
+  const b = $('btnPrev'); if (!b) return;
+  b.classList.toggle('live', S.preview);
+  b.textContent = S.preview ? '⏹️ 停止紅光預覽 (定位中...)' : '🔴 紅光定位預覽（確認打標區域）';
+  b.disabled = S.marking; $('btnMark').disabled = S.marking;
+}
+async function togglePreview() {
+  const size = $('pSize') ? +$('pSize').value : undefined;
+  const j = await api('/api/queue/preview', { id: S.sel, action: S.preview ? 'stop' : 'start', size_mm: size });
+  if (!j.ok) { toast(j.error || '紅光預覽失敗', 'err'); return; }
+  S.preview = j.action === 'start' && j.preview_active; renderPreviewBtn();
+}
+
+async function doMark() {
+  if (S.marking || !S.sel) return;
+  const it = S.items.find(i => i.id === S.sel); if (!it) return;
+  S.marking = true; S.preview = false;
+  $('btnMark').textContent = '⏳ 打標中，請勿移動工件...'; renderPreviewBtn();
+  let j;
+  try { j = await api('/api/queue/mark', { id: S.sel, ...params(), auto_next: $('autoNext').checked }); }
+  catch (e) { j = { ok: false, error: String(e) }; }
+  S.marking = false; $('btnMark').textContent = '⚡ 開始雷射打標 (F2)';
+  if (!j.ok) { toast('❌ 打標失敗：' + (j.error || ''), 'err'); await refresh(); renderPreviewBtn(); return; }
+  toast(`✅ 批號 ${it.lot_name} 打標完成！`, 'ok');
+  if (j.next) {
+    S.sel = j.next.item.id; S.qr = j.next.qr;
+    await refresh(); renderMark(j.next.item);
+  } else {
+    S.sel = null; S.qr = null;
+    $('mbody').innerHTML = '<div class="placeholder">🎉 待打標佇列已全部完成</div>'; $('actionbar').style.display = 'none';
+    $('wb').classList.remove('view-mark'); await refresh();
+  }
+}
+
+async function requeue(id) { const j = await api('/api/queue/status', { id, status: 'pending' }); if (j.ok) { toast('已退回待打標'); setTab('pending'); } else toast(j.error, 'err'); refresh(); }
+async function del(id) { if (!confirm('確定刪除此筆？')) return; await api('/api/queue/status', { id, action: 'delete' }); refresh(); }
+async function clearDone() { if (!confirm('清除所有已完成項目？')) return; const j = await api('/api/queue/clear-done', {}); toast(`已清除 ${j.removed || 0} 筆`); refresh(); }
+
+refresh(); setInterval(refresh, 5000);
+</script>
+</body>
+</html>

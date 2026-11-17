@@ -98,6 +98,7 @@ defaultDir = `G:\CodeHere\Laser_Device\EZCAD_LITE_2.14.16(20210519)`
 host := flag.String("host", "127.0.0.1", "監聽位址")
 port := flag.Int("port", 8080, "監聽埠號")
 ezcadDir := flag.String("dir", defaultDir, "EzCad2 目錄")
+dataDir := flag.String("data", "", "佇列持久化目錄 (預設 <dir>/data)")
 autoOpen := flag.Bool("open", true, "自動開啟瀏覽器")
 flag.Parse()
 
@@ -280,6 +281,15 @@ w.WriteHeader(http.StatusBadRequest)
 }
 json.NewEncoder(w).Encode(res)
 })
+
+if *dataDir == "" {
+*dataDir = filepath.Join(*ezcadDir, "data")
+}
+store, err := NewQueueStore(*dataDir)
+if err != nil {
+log.Fatalf("初始化佇列失敗 (%s): %v", *dataDir, err)
+}
+registerQueueRoutes(mux, controller, store, webFS)
 
 addr := fmt.Sprintf("%s:%d", *host, *port)
 url := fmt.Sprintf("http://127.0.0.1:%d", *port)
