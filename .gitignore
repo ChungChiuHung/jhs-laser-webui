@@ -1,3 +1,4 @@
+# Binaries & Build Output
 *.exe
 *.dll
 *.so
@@ -5,10 +6,21 @@
 jhs-laser-webui-*
 jcz-web-linux-*
 dist/
+
+# Frida Spy Temporary Files
+ezcad_*.py
+ezcad_*.txt
+*.log
+
+# EzCad proprietary config & calibration files
 *.cfg
 *.CFG
 *.cor
 *.COR
 *.ezd
+
+# IDE & OS
 .vscode/
 .idea/
+.DS_Store
+Thumbs.db
