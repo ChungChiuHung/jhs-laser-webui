@@ -16,9 +16,9 @@ InputPortHex  string `json:"input_port_hex"`
 InputPortBin  string `json:"input_port_bin"`
 OutputPortHex string `json:"output_port_hex"`
 OutputPortBin string `json:"output_port_bin"`
-LaserReady    bool   `json:"laser_ready"`
-XOrg0         bool   `json:"x_org0"`
-YOrg0         bool   `json:"y_org0"`
+FieldSizeMM   string `json:"field_size_mm"`
+TotalParts    string `json:"total_parts"`
+TotalTimeSec  string `json:"total_time_sec"`
 ErrorMsg      string `json:"error_msg,omitempty"`
 }
 

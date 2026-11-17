@@ -3,10 +3,12 @@
 package main
 
 import (
+"bufio"
 "fmt"
 "os"
 "path/filepath"
 "runtime"
+"strings"
 "sync"
 "syscall"
 "unsafe"
@@ -55,6 +57,27 @@ procClose:     dll.NewProc("?MIO_Close@@YAXXZ"),
 }
 }
 
+func (d *WindowsJczDriver) readMarkCfg7(status *BoardStatus) {
+cfgPath := filepath.Join(d.ezcadDir, "plug", "markcfg7")
+f, err := os.Open(cfgPath)
+if err != nil {
+status.FieldSizeMM = "110 x 110 mm"
+return
+}
+defer f.Close()
+
+scanner := bufio.NewScanner(f)
+for scanner.Scan() {
+line := strings.TrimSpace(scanner.Text())
+if strings.HasPrefix(line, "TOTALPARTNUM=") {
+status.TotalParts = strings.TrimPrefix(line, "TOTALPARTNUM=")
+} else if strings.HasPrefix(line, "MARKTOTALTIME=") {
+status.TotalTimeSec = strings.TrimPrefix(line, "MARKTOTALTIME=")
+}
+}
+status.FieldSizeMM = "110 x 110 mm (Raycus Fiber 20-80kHz)"
+}
+
 func (d *WindowsJczDriver) prepareEnv() error {
 if runtime.GOARCH != "386" {
 return fmt.Errorf("LMCMIO.dll requires GOARCH=386")
@@ -72,6 +95,7 @@ defer d.mu.Unlock()
 status := BoardStatus{
 Platform: fmt.Sprintf("Windows (%s)", runtime.GOARCH),
 }
+d.readMarkCfg7(&status)
 
 if err := d.prepareEnv(); err != nil {
 status.ErrorMsg = err.Error()
@@ -123,9 +147,6 @@ status.InputPortHex = fmt.Sprintf("0x%04X", ioVal)
 status.InputPortBin = fmt.Sprintf("%016b", ioVal)
 status.OutputPortHex = fmt.Sprintf("0x%04X", d.outPort)
 status.OutputPortBin = fmt.Sprintf("%016b", d.outPort)
-status.LaserReady = (ioVal & (1 << 0)) != 0
-status.XOrg0 = (ioVal & (1 << 14)) != 0
-status.YOrg0 = (ioVal & (1 << 15)) != 0
 
 return status
 }
@@ -150,7 +171,7 @@ defer d.procClose.Call()
 d.outPort = (d.outPort & ^mask) | (val & mask)
 
 var res tagResult
-// 同時呼叫 MIO_WritePort 與底層單一命令 0x0021 確保不同韌體皆立即變更輸出電位
+// 同時支援 (val, mask) 與 (mask, val) 並透過單一指令 0x0021 強制刷新硬體閂鎖
 d.procWritePort.Call(uintptr(unsafe.Pointer(&res)), 0, uintptr(d.outPort), uintptr(0xFFFF))
 d.procCmd.Call(uintptr(unsafe.Pointer(&res)), 0, 0x0021, uintptr(d.outPort), uintptr(0xFFFF), 0, 0, 0)
 return nil

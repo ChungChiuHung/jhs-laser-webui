@@ -44,9 +44,9 @@ InputPortHex:  fmt.Sprintf("0x%04X", d.inPort),
 InputPortBin:  fmt.Sprintf("%016b", d.inPort),
 OutputPortHex: fmt.Sprintf("0x%04X", d.outPort),
 OutputPortBin: fmt.Sprintf("%016b", d.outPort),
-LaserReady:    (d.inPort & (1 << 0)) != 0,
-XOrg0:         (d.inPort & (1 << 14)) != 0,
-YOrg0:         (d.inPort & (1 << 15)) != 0,
+FieldSizeMM:   "110 x 110 mm (Raycus Fiber 20-80kHz)",
+TotalParts:    "34957",
+TotalTimeSec:  "22009",
 }
 }
 

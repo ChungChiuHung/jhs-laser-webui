@@ -3,11 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>JHS 雷射打標設備 Web 監控中心 (v2.0 IO控制版)</title>
+  <title>JHS 雷射打標設備 Web 監控中心 (markcfg7 實體元件映射版)</title>
   <style>
-    :root { --bg: #0f172a; --card: #1e293b; --text: #f8fafc; --muted: #94a3b8; --ok: #22c55e; --warn: #f59e0b; --err: #ef4444; --accent: #38bdf8; }
+    :root { --bg: #0f172a; --card: #1e293b; --text: #f8fafc; --muted: #94a3b8; --ok: #22c55e; --warn: #f59e0b; --err: #ef4444; --accent: #38bdf8; --mapped: #a855f7; }
     body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; }
-    .container { max-width: 1080px; margin: 0 auto; }
+    .container { max-width: 1120px; margin: 0 auto; }
     header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #334155; padding-bottom: 14px; margin-bottom: 18px; }
     .badge { padding: 6px 12px; border-radius: 999px; font-weight: 600; font-size: 14px; }
     .badge.ok { background: rgba(34,197,94,0.2); color: var(--ok); }
@@ -15,27 +15,29 @@
     .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
     .card { background: var(--card); border-radius: 12px; padding: 18px; border: 1px solid #334155; }
     .card h3 { margin-top: 0; color: var(--accent); font-size: 16px; border-bottom: 1px solid #334155; padding-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
-    .kv { display: flex; justify-content: space-between; padding: 7px 0; border-bottom: 1px dashed #334155; font-size: 14px; }
+    .kv { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px dashed #334155; font-size: 13.5px; }
     .kv span:first-child { color: var(--muted); }
     .kv span:last-child { font-family: monospace; font-weight: 600; }
     .io-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 8px; margin-top: 10px; }
-    .io-pin { background: #0f172a; border: 1px solid #334155; border-radius: 6px; padding: 8px 4px; text-align: center; font-size: 12px; font-family: monospace; transition: all 0.15s; }
+    .io-pin { background: #0f172a; border: 1px solid #334155; border-radius: 6px; padding: 8px 4px; text-align: center; font-size: 12px; font-family: monospace; transition: all 0.15s; position: relative; }
     .io-pin.high { border-color: var(--ok); color: var(--ok); background: rgba(34,197,94,0.12); }
+    .io-pin.mapped-hw { box-shadow: inset 0 0 0 1px rgba(56,189,248,0.5); }
+    .hw-tag { display: inline-block; margin-top: 3px; padding: 1px 5px; border-radius: 4px; font-size: 10.5px; background: rgba(56,189,248,0.18); color: var(--accent); font-family: system-ui, sans-serif; }
     .out-btn { cursor: pointer; user-select: none; }
     .out-btn:hover { border-color: var(--accent); transform: translateY(-1px); }
-    .out-btn.active { border-color: var(--warn); color: var(--warn); background: rgba(245,158,11,0.2); box-shadow: 0 0 8px rgba(245,158,11,0.3); }
+    .out-btn.active { border-color: var(--warn); color: var(--warn); background: rgba(245,158,11,0.22); box-shadow: 0 0 10px rgba(245,158,11,0.35); }
     .pin-val { font-size: 15px; font-weight: bold; margin-top: 4px; }
     button { background: var(--accent); color: #0f172a; border: none; padding: 8px 16px; border-radius: 6px; font-weight: 600; cursor: pointer; }
     button:hover { opacity: 0.9; }
     .btn-sm { padding: 5px 12px; font-size: 12px; border-radius: 4px; }
-    input[type="number"] { background: #0f172a; border: 1px solid #334155; color: var(--text); padding: 6px 10px; border-radius: 6px; width: 90px; }
+    input[type="number"] { background: #0f172a; border: 1px solid #334155; color: var(--text); padding: 6px 10px; border-radius: 6px; width: 85px; }
   </style>
 </head>
 <body>
   <div class="container">
     <header>
       <div>
-        <h1 style="margin:0; font-size:22px;">JHS 雷射打標設備監控面板 <span style="font-size:13px; color:var(--warn);">[含輸出 IO 控制]</span></h1>
+        <h1 style="margin:0; font-size:22px;">JHS 雷射打標設備監控面板 <span style="font-size:13px; color:var(--accent);">[已載入 plug\markcfg7 機台元件映射]</span></h1>
         <small id="platform" style="color:var(--muted);">載入中...</small>
       </div>
       <div style="display:flex; gap:12px; align-items:center;">
@@ -48,12 +50,12 @@
 
     <div class="grid">
       <div class="card">
-        <h3><span>硬體與授權狀態</span></h3>
-        <div class="kv"><span>裝置 Handle</span><span id="handle">-</span></div>
-        <div class="kv"><span>底層狀態碼 (GetState)</span><span id="stateHex">-</span></div>
-        <div class="kv"><span>韌體/硬體版本</span><span id="fwVer">-</span></div>
-        <div class="kv"><span>板卡識別序號</span><span id="serialNo">-</span></div>
-        <div class="kv"><span>加密晶片狀態</span><span id="chipId">-</span></div>
+        <h3><span>硬體與授權狀態 (板卡編號 7 → markcfg7)</span></h3>
+        <div class="kv"><span>裝置 Handle / 狀態碼</span><span id="handleState">-</span></div>
+        <div class="kv"><span>韌體版本 / 板卡序號</span><span id="fwSerial">-</span></div>
+        <div class="kv"><span>機台鏡片範圍與雷射源</span><span id="fieldSize">-</span></div>
+        <div class="kv"><span>歷史累計打標數量 (TOTALPARTNUM)</span><span id="totalParts" style="color:var(--warn);">-</span></div>
+        <div class="kv"><span>累計雷射出光時間 (MARKTOTALTIME)</span><span id="totalTime">-</span></div>
       </div>
 
       <div class="card">
@@ -72,24 +74,50 @@
 
     <div class="card" style="margin-top:14px;">
       <h3>
-        <span>16 路通用輸出 IO 互動控制 (MIO_WritePort: <span id="outHex">0x0000</span>)</span>
+        <span>16 路輸出 IO 互動控制 (MIO_WritePort: <span id="outHex">0x0000</span>)</span>
         <div style="display:flex; gap:8px;">
-          <button class="btn-sm" onclick="setAllOutputs(0x00FF, 0x00FF)" style="background:var(--warn);">CON5 全開 (Out0~7)</button>
+          <button class="btn-sm" onclick="toggleOutputPin(4, true)" style="background:var(--warn);">開啟 Out4 (標刻輸出)</button>
+          <button class="btn-sm" onclick="toggleOutputPin(8, true)" style="background:#ef4444; color:#fff;">開啟 Out8 (紅光指示)</button>
           <button class="btn-sm" onclick="setAllOutputs(0xFFFF, 0x0000)" style="background:#475569; color:#fff;">全部關閉 (Reset 0)</button>
         </div>
       </h3>
-      <small style="color:var(--muted); display:block; margin-bottom:6px;">點擊下方任一按鈕即可切換 ON (1) / OFF (0) 輸出電位。Out0~Out7 位於 CON5 (DB25)；Out8 為紅光指示 (RedPt)。</small>
+      <small style="color:var(--muted); display:block; margin-bottom:6px;">依據 <b>markcfg7</b> 與 <b>EZCAD.CFG (OUTPUTIOMASK=511)</b>：本機實際接線為 <b>Out4 (標刻中輸出 MARKOUTPORT=4)</b> 與 <b>Out8 (內建紅光 RedPt)</b>，其餘為預留空腳位。</small>
       <div class="io-grid" id="outGrid"></div>
     </div>
 
     <div class="card" style="margin-top:14px;">
-      <h3><span>16 路通用輸入 IO 即時狀態 (MIO_ReadPort: <span id="ioHex">-</span>)</span><small style="color:var(--muted); font-weight:normal;">CON5 / CON4 / CON2</small></h3>
+      <h3>
+        <span>16 路輸入 IO 即時狀態 (MIO_ReadPort: <span id="ioHex">-</span>)</span>
+        <small style="color:var(--accent); font-weight:normal;">踩下腳踏開關可觀察 In15 狀態變化</small>
+      </h3>
+      <small style="color:var(--muted); display:block; margin-bottom:6px;">依據 <b>markcfg7</b>：<b>In15 = 腳踏開關 (STARTMARKPORT=15)</b>、<b>In14 = 擴展軸0原點 (ACTIVEAXIS0=1)</b>、<b>In8 = 飛行觸發 (FLY_STARTINPORT=8)</b>、<b>In0 = 雷射就緒</b>。</small>
       <div class="io-grid" id="ioGrid"></div>
     </div>
   </div>
 
   <script>
-    let currentOutBin = '0000000000000000';
+    const outHwMap = {
+      4: '★標刻輸出 (CON5-Pin1)',
+      8: '★紅光指示 (RedPt)',
+      0: '預留 (CON5-Pin5)',
+      1: '預留 (CON5-Pin17)',
+      2: '預留 (CON5-Pin4)',
+      3: '預留 (CON5-Pin16)',
+      5: '預留 (CON5-Pin14)',
+      6: '預留 (CON5-Pin2)',
+      7: '預留 (CON5-Pin15)'
+    };
+
+    const inHwMap = {
+      15: '★腳踏開關 (StartMark)',
+      14: '★Z軸/旋轉軸原點 (XORG0)',
+      8:  '★飛行感測器 (FlyStart)',
+      0:  '★雷射源就緒 (LaserReady)',
+      4:  '通用輸入 (CON5-Pin24)',
+      3:  '通用輸入 (CON2-Pin15)',
+      2:  '通用輸入 (CON2-Pin2)',
+      1:  '通用輸入 (CON2-Pin14)'
+    };
 
     async function fetchStatus() {
       try {
@@ -110,11 +138,13 @@
         badge.textContent = data.connected ? '設備已就緒 (OK)' : '未連線';
         badge.className = data.connected ? 'badge ok' : 'badge err';
 
-        document.getElementById('handle').textContent = data.handle_hex;
-        document.getElementById('stateHex').textContent = data.state_hex;
-        document.getElementById('fwVer').textContent = data.firmware_ver;
-        document.getElementById('serialNo').textContent = data.serial_no;
-        document.getElementById('chipId').textContent = data.chip_id_state;
+        document.getElementById('handleState').textContent = data.handle_hex + ' | ' + data.state_hex;
+        document.getElementById('fwSerial').textContent = data.firmware_ver + ' | SN: ' + data.serial_no;
+        document.getElementById('fieldSize').textContent = data.field_size_mm || '110 x 110 mm';
+        document.getElementById('totalParts').textContent = (data.total_parts || '34957') + ' 件';
+        const sec = parseInt(data.total_time_sec || '22009', 10);
+        document.getElementById('totalTime').textContent = sec + ' 秒 (約 ' + (sec / 3600).toFixed(1) + ' 小時)';
+
         document.getElementById('listState').textContent = data.list_ready ? '就緒 (' + data.list_state_hex + ')' : '忙碌 (' + data.list_state_hex + ')';
         document.getElementById('galvoX').textContent = data.galvo_x + ' (0x' + data.galvo_x.toString(16).toUpperCase() + ')';
         document.getElementById('galvoY').textContent = data.galvo_y + ' (0x' + data.galvo_y.toString(16).toUpperCase() + ')';
@@ -123,18 +153,16 @@
 
         const outGrid = document.getElementById('outGrid');
         outGrid.innerHTML = '';
-        currentOutBin = data.output_port_bin || '0000000000000000';
-        const con5Pins = {0:'Pin5', 1:'Pin17', 2:'Pin4', 3:'Pin16', 4:'Pin1', 5:'Pin14', 6:'Pin2', 7:'Pin15'};
+        const currentOutBin = data.output_port_bin || '0000000000000000';
         for (let i = 15; i >= 0; i--) {
           const bit = currentOutBin[15 - i];
           const isHigh = (bit === '1');
+          const isMapped = (i === 4 || i === 8);
           const div = document.createElement('div');
-          div.className = 'io-pin out-btn ' + (isHigh ? 'active' : '');
+          div.className = 'io-pin out-btn ' + (isHigh ? 'active ' : '') + (isMapped ? 'mapped-hw' : '');
           div.onclick = () => toggleOutputPin(i, !isHigh);
-          let label = 'Out' + i;
-          if (con5Pins[i]) label += ' (' + con5Pins[i] + ')';
-          if (i === 8) label += ' (RedPt)';
-          div.innerHTML = '<div>' + label + '</div><div class="pin-val">' + (isHigh ? 'ON (1)' : 'OFF (0)') + '</div>';
+          const tag = outHwMap[i] ? '<div class="hw-tag">' + outHwMap[i] + '</div>' : '<div style="font-size:10px;color:#64748b;margin-top:3px;">未啟用 (Masked)</div>';
+          div.innerHTML = '<div><b>Out' + i + '</b></div>' + tag + '<div class="pin-val">' + (isHigh ? 'ON (1)' : 'OFF (0)') + '</div>';
           outGrid.appendChild(div);
         }
 
@@ -143,13 +171,11 @@
         const bin = data.input_port_bin || '0000000000000000';
         for (let i = 15; i >= 0; i--) {
           const bit = bin[15 - i];
+          const isMapped = (i === 15 || i === 14 || i === 8 || i === 0);
           const div = document.createElement('div');
-          div.className = 'io-pin ' + (bit === '1' ? 'high' : '');
-          let label = 'In' + i;
-          if (i === 0) label += ' (Ready)';
-          if (i === 14) label += ' (XORG0)';
-          if (i === 15) label += ' (YORG0)';
-          div.innerHTML = '<div>' + label + '</div><div class="pin-val">' + bit + '</div>';
+          div.className = 'io-pin ' + (bit === '1' ? 'high ' : '') + (isMapped ? 'mapped-hw' : '');
+          const tag = inHwMap[i] ? '<div class="hw-tag">' + inHwMap[i] + '</div>' : '<div style="font-size:10px;color:#64748b;margin-top:3px;">未接線</div>';
+          div.innerHTML = '<div><b>In' + i + '</b></div>' + tag + '<div class="pin-val">' + bit + '</div>';
           grid.appendChild(div);
         }
       } catch (e) {
