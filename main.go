@@ -38,6 +38,7 @@ Val  uint16
 }
 
 type redReq struct {
+Shape       string
 SizeMM      float64
 StepDelayMs int
 TimeoutSec  int
@@ -115,7 +116,10 @@ return
 }
 var req redReq
 _ = json.NewDecoder(r.Body).Decode(&req)
-if req.Shape == "" { req.Shape = "square" }; err := controller.StartShapePreview(req.Shape, req.SizeMM, req.StepDelayMs, 3)
+if req.Shape == "" {
+req.Shape = "square"
+}
+err := controller.StartShapePreview(req.Shape, req.SizeMM, req.StepDelayMs, 3)
 w.Header().Set("Content-Type", "application/json")
 if err != nil {
 json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": err.Error()})
@@ -131,10 +135,13 @@ return
 }
 var req redReq
 _ = json.NewDecoder(r.Body).Decode(&req)
+if req.Shape == "" {
+req.Shape = "square"
+}
 if req.TimeoutSec <= 0 {
 req.TimeoutSec = 30
 }
-if req.Shape == "" { req.Shape = "square" }; err := controller.StartShapePreview(req.Shape, req.SizeMM, req.StepDelayMs, req.TimeoutSec)
+err := controller.StartShapePreview(req.Shape, req.SizeMM, req.StepDelayMs, req.TimeoutSec)
 w.Header().Set("Content-Type", "application/json")
 if err != nil {
 json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": err.Error()})
@@ -174,7 +181,7 @@ json.NewEncoder(w).Encode(map[string]any{"ok": true})
 
 addr := fmt.Sprintf("%s:%d", *host, *port)
 url := fmt.Sprintf("http://127.0.0.1:%d", *port)
-fmt.Printf("=== JHS Laser WebUI 單機版控制中心 (F1 預覽 + F2 實際打標完整版) ===\n")
+fmt.Printf("=== JHS Laser WebUI 單機版控制中心 (F1 多圖形無縫預覽 + F2 實際打標完整版) ===\n")
 fmt.Printf("本機訪問網址 : %s\n", url)
 fmt.Printf("綁定驅動目錄 : %s\n", *ezcadDir)
 
