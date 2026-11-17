@@ -1,0 +1,14 @@
+*.exe
+*.dll
+*.so
+*.dylib
+jhs-laser-webui-*
+jcz-web-linux-*
+dist/
+*.cfg
+*.CFG
+*.cor
+*.COR
+*.ezd
+.vscode/
+.idea/
