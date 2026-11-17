@@ -641,8 +641,85 @@
             </div>
           </div>
         </section>
-      </div>
+        <!-- QRCode Laser Vector & Direct Marking Studio -->
+        <section class="panel" style="border-color: rgba(108, 142, 173, 0.35);">
+          <div class="panel-header">
+            <h2 class="panel-title"><span class="dot-accent" style="background:var(--morandi-blue);"></span>QRCode 雷射向量產生與直接打標工作室</h2>
+            <span class="status-pill pill-blue" style="font-size:11.5px;">API: /api/qrcode/vector · svg · dxf</span>
+          </div>
 
+          <div style="display:grid; grid-template-columns: 1fr 164px; gap:16px; align-items:start;">
+            <div style="display:flex; flex-direction:column; gap:10px;">
+              <div class="field-group" style="width:100%; padding:8px 10px;">
+                <input type="text" id="qrText" value="https://jhs-laser.local/SN-2026001" placeholder="輸入要編碼的文字或 URL..." style="width:100%; font-weight:500;" oninput="generateQRPreview()">
+              </div>
+
+              <div class="form-row">
+                <div class="field-group">
+                  <span>基準</span>
+                  <select id="qrBasis" onchange="generateQRPreview()">
+                    <option value="total" selected>總外框(含白邊)</option>
+                    <option value="code">純碼區寬度</option>
+                    <option value="module">單點模組寬</option>
+                  </select>
+                </div>
+                <div class="field-group">
+                  <span>尺寸</span>
+                  <input type="number" id="qrSizeMM" value="20" min="3" max="90" step="0.5" style="width:48px;" oninput="generateQRPreview()">
+                  <span>mm</span>
+                </div>
+                <div class="field-group">
+                  <span>容錯</span>
+                  <select id="qrECC" onchange="generateQRPreview()">
+                    <option value="L">L (7%)</option>
+                    <option value="M" selected>M (15%)</option>
+                    <option value="Q">Q (25%)</option>
+                    <option value="H">H (30%)</option>
+                  </select>
+                </div>
+                <div class="field-group">
+                  <span>白邊</span>
+                  <input type="number" id="qrQuiet" value="2" min="0" max="10" style="width:36px;" oninput="generateQRPreview()">
+                </div>
+              </div>
+
+              <div class="form-row">
+                <div class="field-group" title="0 = 僅打外輪廓，0.08 = 高密度填充塗黑">
+                  <span>填充線距</span>
+                  <input type="number" id="qrHatch" value="0.08" min="0" max="0.5" step="0.01" style="width:48px;">
+                  <span>mm</span>
+                </div>
+                <div class="field-group">
+                  <span>功率</span>
+                  <input type="number" id="qrPower" value="35" min="1" max="100" style="width:44px; color:#DFB890;">
+                  <span>%</span>
+                </div>
+                <div class="field-group">
+                  <span>速度</span>
+                  <input type="number" id="qrSpeed" value="450" min="80" max="3000" step="10" style="width:52px;">
+                </div>
+              </div>
+
+              <div id="qrMetaBox" style="font-family:var(--font-mono); font-size:11.5px; color:var(--text-secondary); background:var(--bg-input); padding:7px 10px; border-radius:var(--radius-sm);">
+                長寬計算中...
+              </div>
+
+              <div class="form-row">
+                <button class="btn btn-blue" onclick="previewQRFrame()">F1 紅光預覽長寬</button>
+                <button class="btn btn-ghost" onclick="downloadQRFile('svg')">下載 SVG</button>
+                <button class="btn btn-ghost" onclick="downloadQRFile('dxf')">下載 DXF</button>
+                <button class="btn btn-terra" onclick="markQRCodeNow()" style="flex:1;">⚡ 直接雷射打標 QRCode</button>
+              </div>
+            </div>
+
+            <!-- QRCode Live Vector Preview Box -->
+            <div style="background:#F4F6F8; border-radius:var(--radius-md); padding:10px; text-align:center; border:1px solid var(--border-strong);">
+              <div id="qrSvgPreview" style="width:142px; height:142px; margin:0 auto; display:flex; align-items:center; justify-content:center;"></div>
+              <div id="qrDimBadge" style="margin-top:6px; font-family:var(--font-mono); font-size:11px; font-weight:700; color:#1F242B;">20.0 × 20.0 mm</div>
+            </div>
+          </div>
+        </section>
+      </div>
       <!-- Right Column (5 cols): Hardware Specs & Compact 16-Channel I/O Matrix -->
       <div class="col-stack">
         <!-- Hardware & Optical Calibration Specs -->
@@ -855,7 +932,92 @@
     async function moveGalvo() {
       const x = parseInt(document.getElementById('inputX').value, 10);
       const y = parseInt(document.getElementById('inputY').value, 10);
+      let lastQRData = null;
+
+    async function generateQRPreview() {
+      const payload = {
+        text: document.getElementById('qrText').value,
+        size_mm: parseFloat(document.getElementById('qrSizeMM').value) || 20,
+        size_basis: document.getElementById('qrBasis').value,
+        quiet_zone: parseInt(document.getElementById('qrQuiet').value, 10),
+        ecc: document.getElementById('qrECC').value
+      };
+      try {
+        const res = await fetch('/api/qrcode/vector', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (!data.ok) {
+          document.getElementById('qrMetaBox').textContent = '⚠ ' + data.error;
+          return;
+        }
+        lastQRData = data;
+        const box = document.getElementById('qrSvgPreview');
+        box.innerHTML = data.svg;
+        const svgEl = box.querySelector('svg');
+        if (svgEl) {
+          svgEl.style.width = '140px';
+          svgEl.style.height = '140px';
+        }
+        document.getElementById('qrDimBadge').textContent = data.overall_mm + ' × ' + data.overall_mm + ' mm';
+        document.getElementById('qrMetaBox').textContent =
+          data.module_count + '×' + data.module_count + ' 模組 · 總寬 ' + data.overall_mm + 'mm (碼區 ' + data.code_mm + 'mm · 單點 ' + data.module_mm + 'mm) · ' + data.contour_count + ' 條閉合輪廓';
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    function previewQRFrame() {
+      if (!lastQRData) return;
+      document.getElementById('previewShape').value = 'square';
+      document.getElementById('previewSizeMM').value = lastQRData.overall_mm;
       updateScope();
+      startContinuousPreview();
+    }
+
+    function downloadQRFile(ext) {
+      const text = encodeURIComponent(document.getElementById('qrText').value);
+      const size = parseFloat(document.getElementById('qrSizeMM').value) || 20;
+      const basis = document.getElementById('qrBasis').value;
+      const quiet = parseInt(document.getElementById('qrQuiet').value, 10);
+      const ecc = document.getElementById('qrECC').value;
+      window.open('/api/qrcode/' + ext + '?text=' + text + '&size_mm=' + size + '&size_basis=' + basis + '&quiet_zone=' + quiet + '&ecc=' + ecc, '_blank');
+    }
+
+    async function markQRCodeNow() {
+      const mBadge = document.getElementById('markStatusBadge');
+      mBadge.textContent = 'QRCode 雷射雕刻中 (MO=1)...';
+      mBadge.className = 'status-pill pill-terra';
+
+      const res = await fetch('/api/qrcode/mark', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          text: document.getElementById('qrText').value,
+          size_mm: parseFloat(document.getElementById('qrSizeMM').value) || 20,
+          size_basis: document.getElementById('qrBasis').value,
+          quiet_zone: parseInt(document.getElementById('qrQuiet').value, 10),
+          ecc: document.getElementById('qrECC').value,
+          hatch_step_mm: parseFloat(document.getElementById('qrHatch').value) || 0,
+          scale_x: parseFloat(document.getElementById('markScaleX').value) || 1.0,
+          scale_y: parseFloat(document.getElementById('markScaleY').value) || 1.0,
+          power_pct: parseFloat(document.getElementById('qrPower').value) || 35,
+          speed_word: parseInt(document.getElementById('qrSpeed').value, 10) || 450
+        })
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        alert('QRCode 打標失敗: ' + data.error);
+      }
+      mBadge.textContent = 'QRCode 雕刻完成 · 已安全待機 (MO=0)';
+      mBadge.className = 'status-pill pill-sage';
+      fetchStatus();
+    }
+
+    generateQRPreview();
+    updateScope();
       await fetch('/api/gotoxy', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({x, y}) });
       fetchStatus();
     }
@@ -897,7 +1059,92 @@
     function syncPreviewSize() {
       document.getElementById('previewSizeMM').value = document.getElementById('markSizeMM').value;
       document.getElementById('previewShape').value = document.getElementById('markShape').value;
+      let lastQRData = null;
+
+    async function generateQRPreview() {
+      const payload = {
+        text: document.getElementById('qrText').value,
+        size_mm: parseFloat(document.getElementById('qrSizeMM').value) || 20,
+        size_basis: document.getElementById('qrBasis').value,
+        quiet_zone: parseInt(document.getElementById('qrQuiet').value, 10),
+        ecc: document.getElementById('qrECC').value
+      };
+      try {
+        const res = await fetch('/api/qrcode/vector', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (!data.ok) {
+          document.getElementById('qrMetaBox').textContent = '⚠ ' + data.error;
+          return;
+        }
+        lastQRData = data;
+        const box = document.getElementById('qrSvgPreview');
+        box.innerHTML = data.svg;
+        const svgEl = box.querySelector('svg');
+        if (svgEl) {
+          svgEl.style.width = '140px';
+          svgEl.style.height = '140px';
+        }
+        document.getElementById('qrDimBadge').textContent = data.overall_mm + ' × ' + data.overall_mm + ' mm';
+        document.getElementById('qrMetaBox').textContent =
+          data.module_count + '×' + data.module_count + ' 模組 · 總寬 ' + data.overall_mm + 'mm (碼區 ' + data.code_mm + 'mm · 單點 ' + data.module_mm + 'mm) · ' + data.contour_count + ' 條閉合輪廓';
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    function previewQRFrame() {
+      if (!lastQRData) return;
+      document.getElementById('previewShape').value = 'square';
+      document.getElementById('previewSizeMM').value = lastQRData.overall_mm;
       updateScope();
+      startContinuousPreview();
+    }
+
+    function downloadQRFile(ext) {
+      const text = encodeURIComponent(document.getElementById('qrText').value);
+      const size = parseFloat(document.getElementById('qrSizeMM').value) || 20;
+      const basis = document.getElementById('qrBasis').value;
+      const quiet = parseInt(document.getElementById('qrQuiet').value, 10);
+      const ecc = document.getElementById('qrECC').value;
+      window.open('/api/qrcode/' + ext + '?text=' + text + '&size_mm=' + size + '&size_basis=' + basis + '&quiet_zone=' + quiet + '&ecc=' + ecc, '_blank');
+    }
+
+    async function markQRCodeNow() {
+      const mBadge = document.getElementById('markStatusBadge');
+      mBadge.textContent = 'QRCode 雷射雕刻中 (MO=1)...';
+      mBadge.className = 'status-pill pill-terra';
+
+      const res = await fetch('/api/qrcode/mark', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          text: document.getElementById('qrText').value,
+          size_mm: parseFloat(document.getElementById('qrSizeMM').value) || 20,
+          size_basis: document.getElementById('qrBasis').value,
+          quiet_zone: parseInt(document.getElementById('qrQuiet').value, 10),
+          ecc: document.getElementById('qrECC').value,
+          hatch_step_mm: parseFloat(document.getElementById('qrHatch').value) || 0,
+          scale_x: parseFloat(document.getElementById('markScaleX').value) || 1.0,
+          scale_y: parseFloat(document.getElementById('markScaleY').value) || 1.0,
+          power_pct: parseFloat(document.getElementById('qrPower').value) || 35,
+          speed_word: parseInt(document.getElementById('qrSpeed').value, 10) || 450
+        })
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        alert('QRCode 打標失敗: ' + data.error);
+      }
+      mBadge.textContent = 'QRCode 雕刻完成 · 已安全待機 (MO=0)';
+      mBadge.className = 'status-pill pill-sage';
+      fetchStatus();
+    }
+
+    generateQRPreview();
+    updateScope();
     }
 
     function syncAndPreview() {
@@ -936,6 +1183,91 @@
       fetchStatus();
     }
 
+    let lastQRData = null;
+
+    async function generateQRPreview() {
+      const payload = {
+        text: document.getElementById('qrText').value,
+        size_mm: parseFloat(document.getElementById('qrSizeMM').value) || 20,
+        size_basis: document.getElementById('qrBasis').value,
+        quiet_zone: parseInt(document.getElementById('qrQuiet').value, 10),
+        ecc: document.getElementById('qrECC').value
+      };
+      try {
+        const res = await fetch('/api/qrcode/vector', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (!data.ok) {
+          document.getElementById('qrMetaBox').textContent = '⚠ ' + data.error;
+          return;
+        }
+        lastQRData = data;
+        const box = document.getElementById('qrSvgPreview');
+        box.innerHTML = data.svg;
+        const svgEl = box.querySelector('svg');
+        if (svgEl) {
+          svgEl.style.width = '140px';
+          svgEl.style.height = '140px';
+        }
+        document.getElementById('qrDimBadge').textContent = data.overall_mm + ' × ' + data.overall_mm + ' mm';
+        document.getElementById('qrMetaBox').textContent =
+          data.module_count + '×' + data.module_count + ' 模組 · 總寬 ' + data.overall_mm + 'mm (碼區 ' + data.code_mm + 'mm · 單點 ' + data.module_mm + 'mm) · ' + data.contour_count + ' 條閉合輪廓';
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    function previewQRFrame() {
+      if (!lastQRData) return;
+      document.getElementById('previewShape').value = 'square';
+      document.getElementById('previewSizeMM').value = lastQRData.overall_mm;
+      updateScope();
+      startContinuousPreview();
+    }
+
+    function downloadQRFile(ext) {
+      const text = encodeURIComponent(document.getElementById('qrText').value);
+      const size = parseFloat(document.getElementById('qrSizeMM').value) || 20;
+      const basis = document.getElementById('qrBasis').value;
+      const quiet = parseInt(document.getElementById('qrQuiet').value, 10);
+      const ecc = document.getElementById('qrECC').value;
+      window.open('/api/qrcode/' + ext + '?text=' + text + '&size_mm=' + size + '&size_basis=' + basis + '&quiet_zone=' + quiet + '&ecc=' + ecc, '_blank');
+    }
+
+    async function markQRCodeNow() {
+      const mBadge = document.getElementById('markStatusBadge');
+      mBadge.textContent = 'QRCode 雷射雕刻中 (MO=1)...';
+      mBadge.className = 'status-pill pill-terra';
+
+      const res = await fetch('/api/qrcode/mark', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          text: document.getElementById('qrText').value,
+          size_mm: parseFloat(document.getElementById('qrSizeMM').value) || 20,
+          size_basis: document.getElementById('qrBasis').value,
+          quiet_zone: parseInt(document.getElementById('qrQuiet').value, 10),
+          ecc: document.getElementById('qrECC').value,
+          hatch_step_mm: parseFloat(document.getElementById('qrHatch').value) || 0,
+          scale_x: parseFloat(document.getElementById('markScaleX').value) || 1.0,
+          scale_y: parseFloat(document.getElementById('markScaleY').value) || 1.0,
+          power_pct: parseFloat(document.getElementById('qrPower').value) || 35,
+          speed_word: parseInt(document.getElementById('qrSpeed').value, 10) || 450
+        })
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        alert('QRCode 打標失敗: ' + data.error);
+      }
+      mBadge.textContent = 'QRCode 雕刻完成 · 已安全待機 (MO=0)';
+      mBadge.className = 'status-pill pill-sage';
+      fetchStatus();
+    }
+
+    generateQRPreview();
     updateScope();
     setInterval(() => {
       if (document.getElementById('autoRefresh').checked) fetchStatus();

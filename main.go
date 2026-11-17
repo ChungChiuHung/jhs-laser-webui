@@ -12,6 +12,7 @@ import (
 "os/exec"
 "path/filepath"
 "runtime"
+"strconv"
 "time"
 )
 
@@ -42,6 +43,49 @@ Shape       string
 SizeMM      float64
 StepDelayMs int
 TimeoutSec  int
+}
+
+func parseQRReqFromHTTP(r *http.Request) QRVectorRequest {
+var req QRVectorRequest
+if r.Method == http.MethodPost && r.Body != nil {
+_ = json.NewDecoder(r.Body).Decode(&req)
+}
+q := r.URL.Query()
+if v := q.Get("text"); v != "" {
+req.Text = v
+}
+if v := q.Get("size_mm"); v != "" {
+if f, err := strconv.ParseFloat(v, 64); err == nil {
+req.SizeMM = f
+}
+}
+if v := q.Get("size_basis"); v != "" {
+req.SizeBasis = v
+}
+if v := q.Get("quiet_zone"); v != "" {
+if i, err := strconv.Atoi(v); err == nil {
+req.QuietZone = i
+}
+}
+if v := q.Get("ecc"); v != "" {
+req.ECC = v
+}
+if v := q.Get("hatch_step_mm"); v != "" {
+if f, err := strconv.ParseFloat(v, 64); err == nil {
+req.HatchStepMM = f
+}
+}
+if v := q.Get("power_pct"); v != "" {
+if f, err := strconv.ParseFloat(v, 64); err == nil {
+req.PowerPct = f
+}
+}
+if v := q.Get("speed_word"); v != "" {
+if u, err := strconv.ParseUint(v, 10, 16); err == nil {
+req.SpeedWord = uint16(u)
+}
+}
+return req
 }
 
 func main() {
@@ -179,11 +223,69 @@ return
 json.NewEncoder(w).Encode(map[string]any{"ok": true})
 })
 
+// === 外部 API 1：匯入文字/URL 產生雷射用 QRCode 向量資訊 (JSON 含 SVG + DXF + 長寬尺寸) ===
+mux.HandleFunc("/api/qrcode/vector", func(w http.ResponseWriter, r *http.Request) {
+w.Header().Set("Access-Control-Allow-Origin", "*")
+w.Header().Set("Content-Type", "application/json; charset=utf-8")
+req := parseQRReqFromHTTP(r)
+res := GenerateQRVector(req)
+if !res.OK {
+w.WriteHeader(http.StatusBadRequest)
+}
+json.NewEncoder(w).Encode(res)
+})
+
+// === 外部 API 2：直接匯出下載雷射專用合併輪廓 SVG 向量檔 ===
+mux.HandleFunc("/api/qrcode/svg", func(w http.ResponseWriter, r *http.Request) {
+w.Header().Set("Access-Control-Allow-Origin", "*")
+req := parseQRReqFromHTTP(r)
+res := GenerateQRVector(req)
+if !res.OK {
+http.Error(w, res.Error, http.StatusBadRequest)
+return
+}
+w.Header().Set("Content-Type", "image/svg+xml; charset=utf-8")
+w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"qrcode-%smm.svg\"", fmtFloat(res.OverallMM)))
+_, _ = w.Write([]byte(res.SVG))
+})
+
+// === 外部 API 3：直接匯出下載 AutoCAD R12 DXF 雷射向量檔 (相容 EzCad2 / LightBurn) ===
+mux.HandleFunc("/api/qrcode/dxf", func(w http.ResponseWriter, r *http.Request) {
+w.Header().Set("Access-Control-Allow-Origin", "*")
+req := parseQRReqFromHTTP(r)
+res := GenerateQRVector(req)
+if !res.OK {
+http.Error(w, res.Error, http.StatusBadRequest)
+return
+}
+w.Header().Set("Content-Type", "application/dxf")
+w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"qrcode-%smm.dxf\"", fmtFloat(res.OverallMM)))
+_, _ = w.Write([]byte(res.DXF))
+})
+
+// === 外部 API 4：匯入文字/URL 產生 QRCode 並直接執行 F2 雷射打標 ===
+mux.HandleFunc("/api/qrcode/mark", func(w http.ResponseWriter, r *http.Request) {
+w.Header().Set("Access-Control-Allow-Origin", "*")
+w.Header().Set("Content-Type", "application/json; charset=utf-8")
+if r.Method != http.MethodPost {
+http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+return
+}
+req := parseQRReqFromHTTP(r)
+res, err := controller.ExecuteQRCodeMark(req)
+if err != nil {
+res.OK = false
+res.Error = err.Error()
+w.WriteHeader(http.StatusBadRequest)
+}
+json.NewEncoder(w).Encode(res)
+})
+
 addr := fmt.Sprintf("%s:%d", *host, *port)
 url := fmt.Sprintf("http://127.0.0.1:%d", *port)
-fmt.Printf("=== JHS Laser WebUI 單機版控制中心 (F1 多圖形無縫預覽 + F2 實際打標完整版) ===\n")
+fmt.Printf("=== JHS Laser WebUI 控制中心 (含 QRCode 向量工作室 & 外部 API) ===\n")
 fmt.Printf("本機訪問網址 : %s\n", url)
-fmt.Printf("綁定驅動目錄 : %s\n", *ezcadDir)
+fmt.Printf("QR 向量 API  : %s/api/qrcode/vector?text=HELLO&size_mm=20\n", url)
 
 if *autoOpen {
 go func() {

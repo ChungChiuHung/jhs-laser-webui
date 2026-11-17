@@ -104,3 +104,7 @@ return nil
 func (d *SimulatedJczDriver) ExecuteLaserMark(req MarkRequest) error {
 return nil
 }
+
+func (d *SimulatedJczDriver) ExecuteQRCodeMark(req QRVectorRequest) (QRVectorResponse, error) {
+return GenerateQRVector(req), nil
+}

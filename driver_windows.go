@@ -799,3 +799,234 @@ d.lastY.Store(32768)
 
 return nil
 }
+// ExecuteQRCodeMark 產生合併閉合輪廓 QRCode 並透過多 Buffer FIFO 分頁串流直接執行 F2 雷射雕刻 (含外輪廓與平行填充線 Hatch)
+func (d *WindowsJczDriver) ExecuteQRCodeMark(req QRVectorRequest) (QRVectorResponse, error) {
+vec := GenerateQRVector(req)
+if !vec.OK {
+return vec, fmt.Errorf(vec.Error)
+}
+
+d.stopFlag.Store(true)
+d.mu.Lock()
+defer d.mu.Unlock()
+
+if err := d.prepareEnv(); err != nil {
+return vec, err
+}
+ret, _, _ := d.procOpenNew.Call()
+if int32(ret) <= 0 {
+d.procOpen.Call(0)
+}
+handle, _, _ := d.procGetHandle.Call(0)
+if handle == 0 {
+return vec, fmt.Errorf("無法開啟控制卡")
+}
+defer d.procClose.Call()
+
+scaleX := req.ScaleX
+if scaleX < 0.7 || scaleX > 1.3 {
+scaleX = 1.0
+}
+scaleY := req.ScaleY
+if scaleY < 0.7 || scaleY > 1.3 {
+scaleY = 1.0
+}
+powerPct := req.PowerPct
+if powerPct < 1 {
+powerPct = 35
+}
+if powerPct > 100 {
+powerPct = 100
+}
+speedWord := req.SpeedWord
+if speedWord < 50 || speedWord > 5000 {
+speedWord = 450
+}
+
+powerWord := uint16(math.Round((powerPct / 100.0) * 4095.0))
+halfOverall := vec.OverallMM / 2.0
+
+type cmdItem struct {
+isMark bool
+x, y   uint16
+poly   uint16
+}
+var items []cmdItem
+
+// 1. 加入所有合併閉合輪廓外框 (Outer Contours & Holes)
+for _, poly := range vec.ContoursMM {
+if len(poly) < 3 {
+continue
+}
+x0, y0 := d.mmToGalvoDAC((poly[0][0]-halfOverall)*scaleX, (halfOverall-poly[0][1])*scaleY, false)
+items = append(items, cmdItem{isMark: false, x: x0, y: y0})
+for i := 1; i < len(poly); i++ {
+nx, ny := d.mmToGalvoDAC((poly[i][0]-halfOverall)*scaleX, (halfOverall-poly[i][1])*scaleY, false)
+items = append(items, cmdItem{isMark: true, x: nx, y: ny, poly: 0})
+}
+items = append(items, cmdItem{isMark: true, x: x0, y: y0, poly: 0})
+}
+
+// 2. 若設定填充間距 (HatchStepMM > 0)，為暗模組加入雙向弓字形 (Bidirectional) 平行填充線提高對比度
+hatchStep := req.HatchStepMM
+if hatchStep > 0 && hatchStep < 0.02 {
+hatchStep = 0.02
+}
+if hatchStep > 0 {
+lvl, _ := parseECC(req.ECC)
+code, err := qr.Encode(strings.TrimSpace(req.Text), lvl)
+if err == nil {
+n := code.Size
+m := vec.ModuleMM
+q := float64(vec.QuietZone) * m
+linesPerMod := int(math.Max(1, math.Round(m/hatchStep)))
+dirFlip := false
+for r := 0; r < n; r++ {
+for sub := 0; sub < linesPerMod; sub++ {
+yTop := q + (float64(r)+(float64(sub)+0.5)/float64(linesPerMod))*m
+yPhys := (halfOverall - yTop) * scaleY
+c := 0
+for c < n {
+if !code.Black(c, r) {
+c++
+continue
+}
+cEnd := c
+for cEnd+1 < n && code.Black(cEnd+1, r) {
+cEnd++
+}
+xL := (q + float64(c)*m - halfOverall) * scaleX
+xR := (q + float64(cEnd+1)*m - halfOverall) * scaleX
+lx, ly := d.mmToGalvoDAC(xL, yPhys, false)
+rx, ry := d.mmToGalvoDAC(xR, yPhys, false)
+if !dirFlip {
+items = append(items, cmdItem{isMark: false, x: lx, y: ly})
+items = append(items, cmdItem{isMark: true, x: rx, y: ry, poly: 0})
+} else {
+items = append(items, cmdItem{isMark: false, x: rx, y: ry})
+items = append(items, cmdItem{isMark: true, x: lx, y: ly, poly: 0})
+}
+c = cEnd + 1
+}
+dirFlip = !dirFlip
+}
+}
+}
+}
+
+var res tagResult
+cardID := uintptr(0)
+
+// 啟動 F2 雷射序列
+d.procWritePort.Call(uintptr(unsafe.Pointer(&res)), cardID, 0x0000, 0)
+d.procResetList.Call(uintptr(unsafe.Pointer(&res)), cardID)
+d.procGotoXY.Call(uintptr(unsafe.Pointer(&res)), cardID, 0x8001, 0x8001)
+d.procIPGOpenMO.Call(uintptr(unsafe.Pointer(&res)), cardID, 1)
+
+curX, curY := 32769.0, 32769.0
+idx := 0
+total := len(items)
+firstPacket := true
+
+for idx < total {
+var buf tagLmcCmd
+for s := 0; s < 256; s++ {
+buf.words[s*6] = 0x8002
+}
+slot := 0
+if firstPacket {
+buf.words[0*6+0] = 0x8051
+buf.words[1*6+0] = 0x8004
+buf.words[1*6+1] = 800 // MO 預熱 8ms
+buf.words[2*6+0] = 0x801b
+buf.words[2*6+1] = 1000
+buf.words[3*6+0] = 0x8012
+buf.words[3*6+1] = powerWord
+buf.words[4*6+0] = 0x8006
+buf.words[4*6+1] = 2400
+buf.words[5*6+0] = 0x800c
+buf.words[5*6+1] = speedWord
+buf.words[6*6+0] = 0x8007
+buf.words[6*6+1] = 250
+buf.words[7*6+0] = 0x8008
+buf.words[7*6+1] = 100
+buf.words[8*6+0] = 0x800f
+buf.words[8*6+1] = 15
+buf.words[9*6+0] = 0x800d
+buf.words[9*6+1] = 10
+slot = 10
+}
+
+// 若為最後一包則預留 2 個槽位做收尾回中心點
+maxSlot := 256
+if total-idx <= (254 - slot) {
+maxSlot = 254
+}
+
+for slot < maxSlot && idx < total {
+it := items[idx]
+dist := uint16(math.Hypot(float64(it.x)-curX, float64(it.y)-curY))
+if dist == 0 {
+dist = 1
+}
+base := slot * 6
+if it.isMark {
+buf.words[base+0] = 0x8005
+} else {
+buf.words[base+0] = 0x8001
+}
+buf.words[base+1] = it.x
+buf.words[base+2] = it.y
+buf.words[base+3] = it.poly
+buf.words[base+4] = dist
+buf.words[base+5] = 0
+curX, curY = float64(it.x), float64(it.y)
+slot++
+idx++
+}
+
+// 所有指令皆已裝入最後一包時，補上收尾延時與回中心點 (0x8000, 0x8000)
+if idx >= total && slot <= 254 {
+buf.words[slot*6+0] = 0x8004
+buf.words[slot*6+1] = 40
+slot++
+distHome := uint16(math.Hypot(32768.0-curX, 32768.0-curY))
+buf.words[slot*6+0] = 0x8001
+buf.words[slot*6+1] = 0x8000
+buf.words[slot*6+2] = 0x8000
+buf.words[slot*6+4] = distHome
+slot++
+}
+
+if firstPacket {
+d.procWriteCmdBuf.Call(uintptr(unsafe.Pointer(&res)), cardID, uintptr(unsafe.Pointer(&buf)))
+d.procExecuteList.Call(uintptr(unsafe.Pointer(&res)), cardID)
+firstPacket = false
+} else {
+for {
+d.procGetListStat.Call(uintptr(unsafe.Pointer(&res)), cardID)
+if res.v0 != 0 {
+break
+}
+time.Sleep(4 * time.Millisecond)
+}
+d.procWriteCmdBuf.Call(uintptr(unsafe.Pointer(&res)), cardID, uintptr(unsafe.Pointer(&buf)))
+}
+}
+
+// 等待最後一批指令跑完
+time.Sleep(220 * time.Millisecond)
+
+// 安全收尾序列
+d.procSetCtrlMode.Call(uintptr(unsafe.Pointer(&res)), cardID, 1)
+d.procWritePort.Call(uintptr(unsafe.Pointer(&res)), cardID, 0x0000, 0)
+d.procSetStandby.Call(uintptr(unsafe.Pointer(&res)), cardID, 2000, 20, 1)
+d.procIPGOpenMO.Call(uintptr(unsafe.Pointer(&res)), cardID, 0)
+d.procCmd.Call(uintptr(unsafe.Pointer(&res)), cardID, 0x0041, 3, 0, 0, 0, 0)
+d.procWritePort.Call(uintptr(unsafe.Pointer(&res)), cardID, 0x0010, 0)
+d.outPort = 0x0010
+d.lastX.Store(32768)
+d.lastY.Store(32768)
+
+return vec, nil
+}

@@ -27,13 +27,13 @@ ErrorMsg         string `json:"error_msg,omitempty"`
 }
 
 type MarkRequest struct {
-Shape     string  `json:"shape"`      // "circle", "square", "cross"
-SizeMM    float64 `json:"size_mm"`    // 目標直徑或邊長 (mm)
-ScaleX    float64 `json:"scale_x"`    // X 軸真圓度比例補償 (預設 1.000)
-ScaleY    float64 `json:"scale_y"`    // Y 軸真圓度比例補償 (預設 1.000)
-PowerPct  float64 `json:"power_pct"`  // 雷射功率百分比 (1 ~ 100%)
-SpeedWord uint16  `json:"speed_word"` // 雕刻速度參數 (預設 348)
-FreqWord  uint16  `json:"freq_word"`  // 光纖頻率參數 (預設 1000)
+Shape     string  `json:"shape"`
+SizeMM    float64 `json:"size_mm"`
+ScaleX    float64 `json:"scale_x"`
+ScaleY    float64 `json:"scale_y"`
+PowerPct  float64 `json:"power_pct"`
+SpeedWord uint16  `json:"speed_word"`
+FreqWord  uint16  `json:"freq_word"`
 }
 
 type LaserController interface {
@@ -45,4 +45,5 @@ StartContinuousPreview(sizeMM float64, speedParam int, timeoutSec int) error
 StartShapePreview(shape string, sizeMM float64, speedParam int, timeoutSec int) error
 StopPreview() error
 ExecuteLaserMark(req MarkRequest) error
+ExecuteQRCodeMark(req QRVectorRequest) (QRVectorResponse, error)
 }
