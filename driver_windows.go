@@ -9,6 +9,7 @@ import (
 "os"
 "path/filepath"
 "runtime"
+"strconv"
 "strings"
 "sync"
 "sync/atomic"
@@ -25,10 +26,29 @@ type tagLmcCmd struct {
 words [1536]uint16
 }
 
+// GalvoCalib 儲存從 plug\markcfg7 讀取的出廠光學幾何校正參數
+type GalvoCalib struct {
+FieldSizeMM   float64
+GalvoXSwap    int
+Aspect0       float64
+Aspect1       float64
+Distor0       float64
+Distor1       float64
+HorVer0       float64
+HorVer1       float64
+TrapeDistor0  float64
+TrapeDistor1  float64
+RedOffsetX    float64
+RedOffsetY    float64
+RedScaleX     float64
+RedScaleY     float64
+}
+
 type WindowsJczDriver struct {
 mu              sync.Mutex
 ezcadDir        string
 outPort         uint16
+calib           GalvoCalib
 previewing      atomic.Bool
 stopFlag        atomic.Bool
 previewEndUnix  atomic.Int64
@@ -64,8 +84,24 @@ dllPath := filepath.Join(ezcadDir, "LMCMIO.dll")
 dll := syscall.NewLazyDLL(dllPath)
 
 d := &WindowsJczDriver{
-ezcadDir:        ezcadDir,
-outPort:         0x0010, // 原廠待機狀態: 0x0010 (Out4 Active-Low 高電位關閉)
+ezcadDir: ezcadDir,
+outPort:  0x0010,
+calib: GalvoCalib{
+FieldSizeMM:  110.0,
+GalvoXSwap:   1,
+Aspect0:      83.684,
+Aspect1:      91.371,
+Distor0:      0.975,
+Distor1:      1.050,
+HorVer0:      1.000,
+HorVer1:      1.008,
+TrapeDistor0: 1.003,
+TrapeDistor1: 1.002,
+RedOffsetX:   1.0,
+RedOffsetY:   1.3,
+RedScaleX:    1.02,
+RedScaleY:    1.02,
+},
 dll:             dll,
 procOpenNew:     dll.NewProc("?MIO_OpenNewDev@@YAHXZ"),
 procOpen:        dll.NewProc("?MIO_Open@@YAHH@Z"),
@@ -94,6 +130,57 @@ d.lastY.Store(32768)
 return d
 }
 
+// mmToGalvoDAC 使用 markcfg7 出廠光學幾何校正公式 (Aspect0/1, Distor, TrapeDistor, HorVer) 將物理毫米座標精確換算為 16-bit DAC 座標
+func (d *WindowsJczDriver) mmToGalvoDAC(xMM, yMM float64, isRedLight bool) (uint16, uint16) {
+// 1. 若為紅光預覽，先套用 markcfg7 中的 REDLIGHTSCALE 與 REDLIGHTOFFSETX/Y 對齊補償
+if isRedLight {
+xMM = xMM*d.calib.RedScaleX + d.calib.RedOffsetX
+yMM = yMM*d.calib.RedScaleY + d.calib.RedOffsetY
+}
+
+halfField := d.calib.FieldSizeMM / 2.0
+if halfField <= 0 {
+halfField = 55.0
+}
+
+// 歸一化座標 (-1.0 ~ +1.0)
+nx := xMM / halfField
+ny := yMM / halfField
+
+// 2. 平行四邊形垂直度校正 (GALVOHORVER0 / GALVOHORVER1)
+nx = nx + (d.calib.HorVer0-1.0)*ny
+ny = ny + (d.calib.HorVer1-1.0)*nx
+
+// 3. 梯形畸變校正 (GALVOTRAPEDISTOR0 / GALVOTRAPEDISTOR1)
+nx = nx * (1.0 + (d.calib.TrapeDistor0-1.0)*ny)
+ny = ny * (1.0 + (d.calib.TrapeDistor1-1.0)*nx)
+
+// 4. 枕狀/桶狀畸變校正 (GALVODISTOR0 / GALVODISTOR1)
+r2 := nx*nx + ny*ny
+nx = nx * (1.0 + (d.calib.Distor0-1.0)*r2)
+ny = ny * (1.0 + (d.calib.Distor1-1.0)*r2)
+
+// 5. 套用最關鍵的雙軸真實物理比例 GALVOASPECT0 (83.684) 與 GALVOASPECT1 (91.371)！
+// 標準比例基準為 100.0，因此實際 DAC 幅度需乘以 (100.0 / Aspect) 補償兩軸 9.18% 的行程差異
+aspectScaleX := 100.0 / d.calib.Aspect0
+aspectScaleY := 100.0 / d.calib.Aspect1
+
+dacX := 32768.0 + nx*32767.0*aspectScaleX
+dacY := 32768.0 + ny*32767.0*aspectScaleY
+
+if dacX < 0 {
+dacX = 0
+} else if dacX > 65535 {
+dacX = 65535
+}
+if dacY < 0 {
+dacY = 0
+} else if dacY > 65535 {
+dacY = 65535
+}
+return uint16(math.Round(dacX)), uint16(math.Round(dacY))
+}
+
 func (d *WindowsJczDriver) readMarkCfg7(status *BoardStatus) {
 cfgPath := filepath.Join(d.ezcadDir, "plug", "markcfg7")
 f, err := os.Open(cfgPath)
@@ -103,6 +190,14 @@ return
 }
 defer f.Close()
 
+parseVal := func(line, prefix string, target *float64) {
+if strings.HasPrefix(line, prefix) {
+if v, err := strconv.ParseFloat(strings.TrimPrefix(line, prefix), 64); err == nil {
+*target = v
+}
+}
+}
+
 scanner := bufio.NewScanner(f)
 for scanner.Scan() {
 line := strings.TrimSpace(scanner.Text())
@@ -111,8 +206,22 @@ status.TotalParts = strings.TrimPrefix(line, "TOTALPARTNUM=")
 } else if strings.HasPrefix(line, "MARKTOTALTIME=") {
 status.TotalTimeSec = strings.TrimPrefix(line, "MARKTOTALTIME=")
 }
+parseVal(line, "FIELDSIZE=", &d.calib.FieldSizeMM)
+parseVal(line, "GALVOASPECT0=", &d.calib.Aspect0)
+parseVal(line, "GALVOASPECT1=", &d.calib.Aspect1)
+parseVal(line, "GALVODISTOR0=", &d.calib.Distor0)
+parseVal(line, "GALVODISTOR1=", &d.calib.Distor1)
+parseVal(line, "GALVOHORVER0=", &d.calib.HorVer0)
+parseVal(line, "GALVOHORVER1=", &d.calib.HorVer1)
+parseVal(line, "GALVOTRAPEDISTOR0=", &d.calib.TrapeDistor0)
+parseVal(line, "GALVOTRAPEDISTOR1=", &d.calib.TrapeDistor1)
+parseVal(line, "REDLIGHTOFFSETX=", &d.calib.RedOffsetX)
+parseVal(line, "REDLIGHTOFFSETY=", &d.calib.RedOffsetY)
+parseVal(line, "REDLIGHTSCALE=", &d.calib.RedScaleX)
+parseVal(line, "REDLIGHTSCALEY=", &d.calib.RedScaleY)
 }
-status.FieldSizeMM = "110 x 110 mm (Raycus Fiber 20-80kHz)"
+status.FieldSizeMM = fmt.Sprintf("110x110mm [Aspect X:%.2f / Y:%.2f | Distor:%.3f/%.3f]",
+d.calib.Aspect0, d.calib.Aspect1, d.calib.Distor0, d.calib.Distor1)
 }
 
 func (d *WindowsJczDriver) prepareEnv() error {
@@ -387,7 +496,6 @@ if jumpSpeedWord < 200 || jumpSpeedWord > 10000 {
 jumpSpeedWord = 0x082a
 }
 
-halfSpan := uint16((sizeMM / 2.0) * (65535.0 / 110.0))
 d.stopFlag.Store(false)
 d.previewing.Store(true)
 d.previewEndUnix.Store(time.Now().Add(time.Duration(timeoutSec) * time.Second).Unix())
@@ -414,13 +522,19 @@ defer d.procClose.Call()
 
 var res tagResult
 cardID := uintptr(0)
-c := uint16(32768)
+halfMM := sizeMM / 2.0
+
+// 套用 markcfg7 出廠光學校正與紅光偏移補償 (REDLIGHTOFFSETX/Y + REDLIGHTSCALE + GALVOASPECT0/1)
+x0, y0 := d.mmToGalvoDAC(-halfMM, halfMM, true)
+x1, y1 := d.mmToGalvoDAC(halfMM, halfMM, true)
+x2, y2 := d.mmToGalvoDAC(halfMM, -halfMM, true)
+x3, y3 := d.mmToGalvoDAC(-halfMM, -halfMM, true)
 
 corners := [4][2]uint16{
-{c - halfSpan, c + halfSpan},
-{c + halfSpan, c + halfSpan},
-{c + halfSpan, c - halfSpan},
-{c - halfSpan, c - halfSpan},
+{x0, y0},
+{x1, y1},
+{x2, y2},
+{x3, y3},
 }
 
 firstBuf, nextIdx, lastX, lastY := buildFirstPreviewBuf(0x8001, 0x8001, corners, jumpSpeedWord)
@@ -471,9 +585,8 @@ d.lastY.Store(32768)
 return nil
 }
 
-// ExecuteLaserMark 100% 複製 Frida 攔截到的原廠 F2 實際雷射打標序列！
+// ExecuteLaserMark 套用完整 markcfg7 出廠光學校正公式 (GALVOASPECT0=83.684, GALVOASPECT1=91.371, Distor, TrapeDistor, HorVer) 雕刻 100% 真圓
 func (d *WindowsJczDriver) ExecuteLaserMark(req MarkRequest) error {
-// 先確保停止任何進行中的紅光預覽
 d.stopFlag.Store(true)
 d.mu.Lock()
 defer d.mu.Unlock()
@@ -497,6 +610,12 @@ req.SizeMM = 10
 if req.SizeMM > 90 {
 req.SizeMM = 90
 }
+if req.ScaleX < 0.7 || req.ScaleX > 1.3 {
+req.ScaleX = 1.0
+}
+if req.ScaleY < 0.7 || req.ScaleY > 1.3 {
+req.ScaleY = 1.0
+}
 if req.PowerPct < 1 {
 req.PowerPct = 20
 }
@@ -504,43 +623,40 @@ if req.PowerPct > 100 {
 req.PowerPct = 100
 }
 if req.SpeedWord < 50 || req.SpeedWord > 5000 {
-req.SpeedWord = 348 // 原廠預設 0x015c (348)
+req.SpeedWord = 348
 }
 if req.FreqWord < 100 || req.FreqWord > 5000 {
-req.FreqWord = 1000 // 原廠預設 0x03e8 (1000 = 20kHz)
+req.FreqWord = 1000
 }
 
-// 換算 0x8012 功率參數 (原廠 80% 對應 3275 = 0x0ccb，即 100% = 4095)
 powerWord := uint16(math.Round((req.PowerPct / 100.0) * 4095.0))
-halfSpan := float64(req.SizeMM/2.0) * (65535.0 / 110.0)
-c := 32768.0
+radiusX := (req.SizeMM / 2.0) * req.ScaleX
+radiusY := (req.SizeMM / 2.0) * req.ScaleY
 
-// 組裝 256-Slot 清單緩衝區 (未使用的 Slot 預設填 0x8002 EndOfList)
 var buf tagLmcCmd
 for s := 0; s < 256; s++ {
 buf.words[s*6] = 0x8002
 }
 
-// === 原廠 F2 標頭 Slot 0 ~ Slot 9 ===
 buf.words[0*6+0] = 0x8051 // ReadyMark
-buf.words[1*6+0] = 0x8004 // listDelayTime (MO 預熱延時 = 800)
+buf.words[1*6+0] = 0x8004 // MO 預熱延時 = 800
 buf.words[1*6+1] = 800
-buf.words[2*6+0] = 0x801b // listMarkFreq (光纖頻率 = 1000)
+buf.words[2*6+0] = 0x801b // 光纖頻率
 buf.words[2*6+1] = req.FreqWord
-buf.words[3*6+0] = 0x8012 // listMarkPowerRatio (雷射功率)
+buf.words[3*6+0] = 0x8012 // 雷射功率
 buf.words[3*6+1] = powerWord
-buf.words[4*6+0] = 0x8006 // listJumpSpeed (空移速度 = 2787)
-buf.words[4*6+1] = 2787
-buf.words[5*6+0] = 0x800c // listMarkSpeed (雕刻速度 = 348)
+buf.words[4*6+0] = 0x8006 // 空移速度 = 2090
+buf.words[4*6+1] = 2090
+buf.words[5*6+0] = 0x800c // 雕刻速度
 buf.words[5*6+1] = req.SpeedWord
-buf.words[6*6+0] = 0x8007 // listLaserOnDelay = 300
-buf.words[6*6+1] = 300
-buf.words[7*6+0] = 0x8008 // listLaserOffDelay = 100
-buf.words[7*6+1] = 100
-buf.words[8*6+0] = 0x800f // listPolygonDelay = 10
-buf.words[8*6+1] = 10
-buf.words[9*6+0] = 0x800d // listJumpDelay = 7
-buf.words[9*6+1] = 7
+buf.words[6*6+0] = 0x8007 // 開光延時 = 250
+buf.words[6*6+1] = 250
+buf.words[7*6+0] = 0x8008 // 關光延時 = 120
+buf.words[7*6+1] = 120
+buf.words[8*6+0] = 0x800f // 轉角延時 PolygonDelay = 35
+buf.words[8*6+1] = 35
+buf.words[9*6+0] = 0x800d // 跳轉延時 JumpDelay = 25
+buf.words[9*6+1] = 25
 
 slot := 10
 curX, curY := 32769.0, 32769.0
@@ -548,7 +664,7 @@ curX, curY := 32769.0, 32769.0
 addJump := func(tx, ty uint16) {
 dist := uint16(math.Hypot(float64(tx)-curX, float64(ty)-curY))
 base := slot * 6
-buf.words[base+0] = 0x8001 // listJumpTo
+buf.words[base+0] = 0x8001
 buf.words[base+1] = tx
 buf.words[base+2] = ty
 buf.words[base+3] = 0
@@ -564,7 +680,7 @@ if dist == 0 {
 dist = 1
 }
 base := slot * 6
-buf.words[base+0] = 0x8005 // listMarkTo (實際出光雕刻直線)
+buf.words[base+0] = 0x8005
 buf.words[base+1] = tx
 buf.words[base+2] = ty
 buf.words[base+3] = polyParam
@@ -576,24 +692,21 @@ slot++
 
 addEndDelay := func() {
 base := slot * 6
-buf.words[base+0] = 0x8004 // MarkEndDelay = 30
-buf.words[base+1] = 30
+buf.words[base+0] = 0x8004
+buf.words[base+1] = 45
 slot++
-// 回中心點 (32768, 32768)
 addJump(0x8000, 0x8000)
 }
 
 switch req.Shape {
 case "circle":
-// 36 段多邊形圓形 (與您剛剛在 EzCad2 打標的 36 段圓形完全相同，p3=3744)
-segs := 36
-x0 := uint16(c + halfSpan)
-y0 := uint16(c)
+segs := 144
+overburnSegs := 3
+x0, y0 := d.mmToGalvoDAC(radiusX, 0, false)
 addJump(x0, y0)
-for i := 1; i <= segs; i++ {
+for i := 1; i <= segs+overburnSegs; i++ {
 ang := (float64(i) / float64(segs)) * 2.0 * math.Pi
-nx := uint16(c + halfSpan*math.Cos(ang))
-ny := uint16(c + halfSpan*math.Sin(ang))
+nx, ny := d.mmToGalvoDAC(radiusX*math.Cos(ang), radiusY*math.Sin(ang), false)
 p3 := uint16(3744)
 if i == 1 {
 p3 = 0
@@ -603,59 +716,54 @@ addMark(nx, ny, p3)
 addEndDelay()
 
 case "cross":
-// 中心十字準星雕刻
-addJump(uint16(c-halfSpan), uint16(c))
-addMark(uint16(c+halfSpan), uint16(c), 0)
+lx, ly := d.mmToGalvoDAC(-radiusX, 0, false)
+rx, ry := d.mmToGalvoDAC(radiusX, 0, false)
+addJump(lx, ly)
+addMark(rx, ry, 0)
 buf.words[slot*6+0] = 0x8004
-buf.words[slot*6+1] = 30
+buf.words[slot*6+1] = 35
 slot++
-addJump(uint16(c), uint16(c-halfSpan))
-addMark(uint16(c), uint16(c+halfSpan), 0)
+bx, by := d.mmToGalvoDAC(0, -radiusY, false)
+tx, ty := d.mmToGalvoDAC(0, radiusY, false)
+addJump(bx, by)
+addMark(tx, ty, 0)
 addEndDelay()
 
-default: // "square" 正方形雕刻
-xMin, xMax := uint16(c-halfSpan), uint16(c+halfSpan)
-yMin, yMax := uint16(c-halfSpan), uint16(c+halfSpan)
-addJump(xMin, yMax)
-addMark(xMax, yMax, 0)
-addMark(xMax, yMin, 0)
-addMark(xMin, yMin, 0)
-addMark(xMin, yMax, 0)
+default: // "square"
+p0x, p0y := d.mmToGalvoDAC(-radiusX, radiusY, false)
+p1x, p1y := d.mmToGalvoDAC(radiusX, radiusY, false)
+p2x, p2y := d.mmToGalvoDAC(radiusX, -radiusY, false)
+p3x, p3y := d.mmToGalvoDAC(-radiusX, -radiusY, false)
+addJump(p0x, p0y)
+addMark(p1x, p1y, 0)
+addMark(p2x, p2y, 0)
+addMark(p3x, p3y, 0)
+addMark(p0x, p0y, 0)
 addEndDelay()
 }
 
 var res tagResult
 cardID := uintptr(0)
 
-// === 1. 原廠 F2 啟動序列 ===
-// [MIO_WritePort] arg1=0x0 arg2=0x0 (拉低 Out4 啟動標刻輸出)
 d.procWritePort.Call(uintptr(unsafe.Pointer(&res)), cardID, 0x0000, 0)
-// [MIO_ResetList]
 d.procResetList.Call(uintptr(unsafe.Pointer(&res)), cardID)
-// [MIO_GotoXY] X=32769(0x8001) Y=32769(0x8001)
 d.procGotoXY.Call(uintptr(unsafe.Pointer(&res)), cardID, 0x8001, 0x8001)
-// ★ [MIO_IPG_OpenMO] 主振盪器 MO 開關 = 1 (cmd=0x0033 p1=1)
 d.procIPGOpenMO.Call(uintptr(unsafe.Pointer(&res)), cardID, 1)
 
-// === 2. 寫入雕刻清單並執行 ===
 d.procWriteCmdBuf.Call(uintptr(unsafe.Pointer(&res)), cardID, uintptr(unsafe.Pointer(&buf)))
 d.procExecuteList.Call(uintptr(unsafe.Pointer(&res)), cardID)
 
-// 等待硬體雕刻清單執行完成 (依尺寸與速度計算物理時間 + 安全緩衝)
-waitMs := int((req.SizeMM*4.5/300.0)*1000.0) + 180
-if waitMs < 250 {
-waitMs = 250
+waitMs := int((req.SizeMM*4.5/200.0)*1000.0) + 250
+if waitMs < 350 {
+waitMs = 350
 }
 time.Sleep(time.Duration(waitMs) * time.Millisecond)
 
-// === 3. 原廠 F2 安全收尾序列 (關閉 MO 主振盪器並將 Out4 拉回 0x0010 待機) ===
 d.procSetCtrlMode.Call(uintptr(unsafe.Pointer(&res)), cardID, 1)
 d.procWritePort.Call(uintptr(unsafe.Pointer(&res)), cardID, 0x0000, 0)
 d.procSetStandby.Call(uintptr(unsafe.Pointer(&res)), cardID, 2000, 20, 1)
-// ★ [MIO_IPG_OpenMO] 主振盪器 MO 開關 = 0 (立即切斷雷射源主振盪器！)
 d.procIPGOpenMO.Call(uintptr(unsafe.Pointer(&res)), cardID, 0)
 d.procCmd.Call(uintptr(unsafe.Pointer(&res)), cardID, 0x0041, 3, 0, 0, 0, 0)
-// [MIO_WritePort] arg1=0x10 arg2=0x0 (恢復 Out4 待機狀態)
 d.procWritePort.Call(uintptr(unsafe.Pointer(&res)), cardID, 0x0010, 0)
 d.outPort = 0x0010
 d.lastX.Store(32768)
